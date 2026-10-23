@@ -366,7 +366,7 @@ function generateOnce(seed: number, attempt: number, opts: ArenaOptions): ArenaD
   const layoutRng = rng.fork('layout');
   const decoRng = rng.fork('decor');
   const pointRng = rng.fork('points');
-  const themeId: ThemeId = opts.themeId ?? rng.pick(THEME_IDS);
+  const themeId: ThemeId = opts.themeId ?? rng.pick(opts.themePool?.length ? opts.themePool : THEME_IDS);
   const symmetry = layoutRng.weighted<SymmetryMode>(['none', 'mirrorX', 'mirrorXZ', 'rot2'], (s) =>
     s === 'none' ? 2 : s === 'mirrorXZ' ? 2 : 1.5,
   );

@@ -1,12 +1,10 @@
 import type { SeededRandom } from '../core/SeededRandom';
-import type { WeaponDefinition, WeaponFamily, WeaponPart, WeaponStats } from '../combat/WeaponTypes';
+import { MODULE_INFO, type ModuleId, type WeaponDefinition, type WeaponFamily, type WeaponPart, type WeaponStats } from '../combat/WeaponTypes';
 
 /**
  * Modular weapon assembly. A weapon = family base stats + receiver + barrel + magazine + stock +
- * sight. Each component contributes visible geometry and stat modifiers.
- *
- * Milestone 1 ships the default component set per family; Milestone 3 extends the component
- * pools (heavy/rapid/long barrels, energy/explosive/freeze modules) and seeded random selection.
+ * sight + optional special module. Component pools are picked with a seeded RNG under family
+ * compatibility rules; each component contributes visible geometry and stat modifiers.
  */
 
 export const BASE_STATS: Record<WeaponFamily, WeaponStats> = {
@@ -30,6 +28,7 @@ export const BASE_STATS: Record<WeaponFamily, WeaponStats> = {
     reserveStart: 150,
     reserveMax: 240,
     pierce: 0,
+    adsZoom: 0.2,
   },
   shotgun: {
     damage: 10,
@@ -51,6 +50,7 @@ export const BASE_STATS: Record<WeaponFamily, WeaponStats> = {
     reserveStart: 36,
     reserveMax: 60,
     pierce: 0,
+    adsZoom: 0.2,
   },
   smg: {
     damage: 9,
@@ -72,6 +72,7 @@ export const BASE_STATS: Record<WeaponFamily, WeaponStats> = {
     reserveStart: 200,
     reserveMax: 320,
     pierce: 0,
+    adsZoom: 0.2,
   },
 };
 
@@ -194,24 +195,294 @@ const SIGHTS: Record<WeaponFamily, ComponentDef> = {
 const FAMILY_NAMES: Record<WeaponFamily, string> = { rifle: 'Rifle', shotgun: 'Shotgun', smg: 'SMG' };
 const SIGHT_HEIGHT: Record<WeaponFamily, number> = { rifle: 0.118, shotgun: 0.06, smg: 0.09 };
 const MUZZLE: Record<WeaponFamily, [number, number, number]> = { rifle: [0, 0.02, 0.62], shotgun: [0, 0.02, 0.57], smg: [0, 0.015, 0.41] };
+/** Barrel bore thickness per family, used to size procedural barrel attachments. */
+const BORE: Record<WeaponFamily, number> = { rifle: 0.034, shotgun: 0.05, smg: 0.03 };
 
-/** Assembles a weapon definition. `rng` is reserved for seeded component selection (Milestone 3). */
-export function createWeapon(family: WeaponFamily, _rng?: SeededRandom): WeaponDefinition {
-  const comps = [RECEIVERS[family], BARRELS[family], MAGAZINES[family], STOCKS[family], SIGHTS[family]];
+// ------------------------------------------------------------------ component variants
+
+interface Variant {
+  id: string;
+  /** Word used in the generated name ('' = standard). */
+  label: string;
+  /** Display name for UI lists. */
+  name: string;
+  weight: number;
+  /** Families this variant is compatible with (default: all). */
+  families?: WeaponFamily[];
+  modify?: (s: WeaponStats, family: WeaponFamily) => void;
+  /** Extra / replacement geometry built from the family's standard parts. */
+  parts: (family: WeaponFamily, standard: WeaponPart[]) => WeaponPart[];
+  /** Forward shift of the muzzle point (metres). */
+  muzzleShift?: number;
+  /** Sight-line height override (for sights). */
+  sightHeight?: (family: WeaponFamily) => number;
+}
+
+const keep = (_f: WeaponFamily, standard: WeaponPart[]) => standard;
+
+const BARREL_VARIANTS: Variant[] = [
+  { id: 'barrel_standard', label: '', name: 'Standard barrel', weight: 3, parts: keep },
+  {
+    id: 'barrel_long',
+    label: 'Marksman',
+    name: 'Long barrel (accuracy, range)',
+    weight: 2,
+    modify: (s) => {
+      s.spreadHip *= 0.75;
+      s.spreadAds *= 0.6;
+      s.range += 30;
+      s.falloffStart *= 1.4;
+      s.recoilPitch *= 0.9;
+    },
+    parts: (f, std) => {
+      const [, y, z] = MUZZLE[f];
+      const b = BORE[f];
+      return [...std, box([0, y, z + 0.07], [b, b, 0.14], 'dark'), box([0, y, z + 0.15], [b * 1.5, b * 1.5, 0.03], 'accent')];
+    },
+    muzzleShift: 0.16,
+  },
+  {
+    id: 'barrel_heavy',
+    label: 'Heavy',
+    name: 'Heavy barrel (+25% damage, slower)',
+    weight: 2,
+    modify: (s, f) => {
+      if (f === 'shotgun') {
+        // Slug barrel: fewer, heavier, tighter pellets.
+        s.pellets = 4;
+        s.damage *= 1.6;
+        s.spreadHip *= 0.6;
+        s.spreadAds *= 0.6;
+      } else {
+        s.damage *= 1.25;
+        s.fireRate *= 0.85;
+      }
+      s.recoilPitch *= 1.3;
+    },
+    parts: (f, std) => {
+      const [, y, z] = MUZZLE[f];
+      const b = BORE[f];
+      return [...std, box([0, y, z - 0.08], [b * 2.3, b * 2.3, 0.14], 'secondary'), box([0, y, z + 0.03], [b * 2.7, b * 1.8, 0.06], 'accent'), box([0, y, z + 0.03], [b * 1.2, b * 2.4, 0.02], 'dark')];
+    },
+    muzzleShift: 0.05,
+  },
+  {
+    id: 'barrel_rapid',
+    label: 'Rapid',
+    name: 'Rapid barrel (+20% fire rate)',
+    weight: 2,
+    modify: (s) => {
+      s.fireRate *= 1.2;
+      s.damage *= 0.88;
+      s.bloomPerShot *= 1.25;
+    },
+    parts: (f, std) => {
+      const [, y, z] = MUZZLE[f];
+      const b = BORE[f];
+      const fins: WeaponPart[] = [];
+      for (let k = 0; k < 4; k++) fins.push(box([0, y, z - 0.16 + k * 0.045], [b * 2.6, b * 2.6, 0.012], 'accent'));
+      return [...std, ...fins];
+    },
+  },
+];
+
+/** Stretches magazine parts downward (taller magazine). */
+const stretchDown = (parts: WeaponPart[], k: number): WeaponPart[] =>
+  parts.map((p) => box([p.c[0], p.c[1] - (p.s[1] * (k - 1)) / 2 - (p.c[1] < -0.1 ? p.s[1] * (k - 1) * 0.3 : 0), p.c[2]], [p.s[0], p.s[1] * k, p.s[2]], p.slot));
+
+const MAG_VARIANTS: Variant[] = [
+  { id: 'mag_standard', label: '', name: 'Standard magazine', weight: 3, parts: keep },
+  {
+    id: 'mag_extended',
+    label: 'Extended',
+    name: 'Extended magazine (+40% capacity)',
+    weight: 2,
+    modify: (s) => {
+      s.magazineSize = Math.ceil(s.magazineSize * 1.4);
+      s.reloadTime *= 1.1;
+    },
+    parts: (f, std) => (f === 'shotgun' ? std.map((p) => box([p.c[0], p.c[1], p.c[2] + 0.04], [p.s[0], p.s[1], p.s[2] * 1.45], p.slot)) : stretchDown(std, 1.4)),
+  },
+  {
+    id: 'mag_drum',
+    label: 'Drum',
+    name: 'Drum magazine (+80% capacity, slow reload)',
+    weight: 1,
+    families: ['rifle', 'smg'],
+    modify: (s) => {
+      s.magazineSize = Math.ceil(s.magazineSize * 1.8);
+      s.reloadTime *= 1.35;
+    },
+    parts: (_f, std) => {
+      const first = std[0]!;
+      const y = first.c[1] - 0.02;
+      const z = first.c[2];
+      return [box([0, y, z], [0.1, 0.13, 0.12], 'secondary'), box([0, y, z], [0.104, 0.05, 0.124], 'accent'), box([0, y + 0.07, z], [0.05, 0.03, 0.06], 'dark')];
+    },
+  },
+  {
+    id: 'mag_quick',
+    label: 'Quickload',
+    name: 'Quick magazine (−28% reload, smaller)',
+    weight: 2,
+    modify: (s) => {
+      s.magazineSize = Math.max(2, Math.floor(s.magazineSize * 0.85));
+      s.reloadTime *= 0.72;
+    },
+    parts: (_f, std) => {
+      const first = std[0]!;
+      return [...std, box([0, first.c[1], first.c[2]], [first.s[0] + 0.008, 0.02, first.s[2] + 0.008], 'accent')];
+    },
+  },
+];
+
+const STOCK_VARIANTS: Variant[] = [
+  { id: 'stock_standard', label: '', name: 'Standard stock', weight: 3, parts: keep },
+  {
+    id: 'stock_steady',
+    label: 'Steady',
+    name: 'Steady stock (−30% recoil)',
+    weight: 2,
+    modify: (s) => {
+      s.recoilPitch *= 0.7;
+      s.recoilYaw *= 0.7;
+    },
+    parts: (_f, std) => [...std.map((p) => box([p.c[0], p.c[1] - 0.005, p.c[2] - 0.02], [p.s[0] * 1.15, p.s[1] * 1.2, p.s[2] * 1.15], p.slot)), box([0, -0.07, -0.24], [0.05, 0.05, 0.08], 'dark')],
+  },
+  {
+    id: 'stock_light',
+    label: 'Light',
+    name: 'Light stock (faster reload, more recoil)',
+    weight: 2,
+    modify: (s) => {
+      s.reloadTime *= 0.9;
+      s.recoilPitch *= 1.15;
+    },
+    parts: () => [box([0, 0.02, -0.18], [0.02, 0.02, 0.2], 'dark'), box([0, -0.05, -0.18], [0.02, 0.02, 0.2], 'dark'), box([0, -0.015, -0.28], [0.03, 0.1, 0.025], 'accent')],
+  },
+];
+
+const SIGHT_VARIANTS: Variant[] = [
+  { id: 'sight_standard', label: '', name: 'Standard sight', weight: 3, parts: keep },
+  {
+    id: 'sight_scope',
+    label: 'Scoped',
+    name: 'Scope (tight aim, more zoom)',
+    weight: 1,
+    families: ['rifle'],
+    modify: (s) => {
+      s.spreadAds *= 0.5;
+      s.adsZoom = 0.42;
+    },
+    parts: () => [
+      box([0, 0.084, 0], [0.062, 0.02, 0.1], 'dark'),
+      box([0, 0.128, 0.01], [0.05, 0.05, 0.22], 'dark'),
+      box([0, 0.128, 0.125], [0.058, 0.058, 0.02], 'accent'),
+      box([0, 0.128, -0.105], [0.056, 0.056, 0.02], 'accent'),
+      box([0, 0.128, 0.137], [0.03, 0.03, 0.004], 'emissive'),
+    ],
+    sightHeight: () => 0.128,
+  },
+  {
+    id: 'sight_holo',
+    label: '',
+    name: 'Holo sight (steadier aim)',
+    weight: 2,
+    families: ['rifle', 'smg'],
+    modify: (s) => {
+      s.spreadAds *= 0.85;
+    },
+    parts: (f) => {
+      const y = SIGHT_HEIGHT[f] - 0.03;
+      return [box([0, y, 0.01], [0.06, 0.02, 0.09], 'dark'), box([-0.028, y + 0.035, 0.03], [0.008, 0.05, 0.01], 'secondary'), box([0.028, y + 0.035, 0.03], [0.008, 0.05, 0.01], 'secondary'), box([0, y + 0.06, 0.03], [0.064, 0.008, 0.01], 'secondary'), box([0, y + 0.03, 0.03], [0.006, 0.006, 0.004], 'emissive')];
+    },
+    sightHeight: (f) => SIGHT_HEIGHT[f] + 0.01,
+  },
+];
+
+/** Side-mounted module canister with a glowing coil (coloured by the module, not the skin). */
+function moduleParts(f: WeaponFamily): WeaponPart[] {
+  const z = f === 'smg' ? 0.14 : 0.2;
+  return [
+    box([0.065, -0.005, z], [0.03, 0.055, 0.13], 'dark'),
+    box([0.075, -0.005, z], [0.012, 0.04, 0.1], 'module'),
+    box([0.065, 0.028, z + 0.05], [0.026, 0.012, 0.012], 'module'),
+    box([0, 0.02, MUZZLE[f][2] - 0.01], [BORE[f] * 1.4, BORE[f] * 1.4, 0.015], 'module'),
+  ];
+}
+
+export interface WeaponOptions {
+  /** Modules that may roll (from unlocks). Empty = never. */
+  modules?: ModuleId[];
+  /** Force the plain standard configuration (deterministic baseline). */
+  standard?: boolean;
+  /** Force a specific module (crates from elites, tests). */
+  module?: ModuleId | null;
+}
+
+function pickVariant(list: Variant[], family: WeaponFamily, rng: SeededRandom): Variant {
+  return rng.weighted(
+    list.filter((v) => !v.families || v.families.includes(family)),
+    (v) => v.weight,
+  );
+}
+
+/** Stat caps so stacked components stay sensible. */
+function capStats(s: WeaponStats): void {
+  s.fireRate = Math.min(s.fireRate, 16);
+  s.reloadTime = Math.max(0.6, s.reloadTime);
+  s.magazineSize = Math.min(Math.round(s.magazineSize), 90);
+  s.spreadAds = Math.max(0.0015, s.spreadAds);
+  s.reserveStart = Math.round(Math.max(s.reserveStart, s.magazineSize * 4));
+  s.reserveMax = Math.round(Math.max(s.reserveMax, s.magazineSize * 6));
+}
+
+/**
+ * Assembles a weapon from family base stats and seeded component picks. Every component changes
+ * both the model and the stats; the name is derived from the components, e.g. "Volatile Heavy Rifle".
+ */
+export function createWeapon(family: WeaponFamily, rng?: SeededRandom, opts: WeaponOptions = {}): WeaponDefinition {
+  const plain = opts.standard || !rng;
+  const barrel = plain ? BARREL_VARIANTS[0]! : pickVariant(BARREL_VARIANTS, family, rng);
+  const mag = plain ? MAG_VARIANTS[0]! : pickVariant(MAG_VARIANTS, family, rng);
+  const stock = plain ? STOCK_VARIANTS[0]! : pickVariant(STOCK_VARIANTS, family, rng);
+  const sight = plain ? SIGHT_VARIANTS[0]! : pickVariant(SIGHT_VARIANTS, family, rng);
+  let module: ModuleId | null = null;
+  if (opts.module !== undefined) module = opts.module;
+  else if (!plain && opts.modules?.length && rng.chance(0.45)) module = rng.pick(opts.modules);
+
   const stats: WeaponStats = { ...BASE_STATS[family] };
-  for (const c of comps) c.modify?.(stats);
-  const labels = comps.map((c) => c.label).filter(Boolean);
-  const name = [...labels, FAMILY_NAMES[family]].join(' ');
-  const magazine = MAGAZINES[family];
+  for (const v of [barrel, mag, stock, sight]) v.modify?.(stats, family);
+  capStats(stats);
+
+  const parts = [
+    ...RECEIVERS[family].parts,
+    ...barrel.parts(family, BARRELS[family].parts),
+    ...stock.parts(family, STOCKS[family].parts),
+    ...sight.parts(family, SIGHTS[family].parts),
+    ...(module ? moduleParts(family) : []),
+  ];
+  const magazine = mag.parts(family, MAGAZINES[family].parts);
+  const muzzle = MUZZLE[family];
+  const shift = barrel.muzzleShift ?? 0;
+
+  const descriptor = [barrel, mag, sight, stock].map((v) => v.label).find(Boolean) ?? '';
+  const prefix = module ? MODULE_INFO[module].prefix : '';
+  const words = [prefix, descriptor, FAMILY_NAMES[family]].filter(Boolean);
+  const tier = [barrel, mag, stock, sight].filter((v) => !v.id.endsWith('_standard')).length + (module ? 1 : 0);
+
   return {
-    id: comps.map((c) => c.id).join('+'),
-    name: labels.length ? name : `Standard ${FAMILY_NAMES[family]}`,
+    id: [RECEIVERS[family].id, barrel.id, mag.id, stock.id, sight.id, module ?? 'none'].join('+'),
+    name: words.length > 1 ? words.join(' ') : `Standard ${FAMILY_NAMES[family]}`,
     family,
     stats,
-    parts: comps.filter((c) => c !== magazine).flatMap((c) => c.parts),
-    magazine: magazine.parts,
-    muzzle: MUZZLE[family],
-    sightHeight: SIGHT_HEIGHT[family],
-    components: comps.map((c) => c.id),
+    parts,
+    magazine,
+    muzzle: [muzzle[0], muzzle[1], muzzle[2] + shift],
+    sightHeight: sight.sightHeight?.(family) ?? SIGHT_HEIGHT[family],
+    components: [barrel.id, mag.id, stock.id, sight.id, module ? `module_${module}` : 'module_none'],
+    componentNames: [barrel.name, mag.name, stock.name, sight.name, module ? MODULE_INFO[module].name : 'No module'],
+    module,
+    tier,
   };
 }

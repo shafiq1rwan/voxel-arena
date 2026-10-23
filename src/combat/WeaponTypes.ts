@@ -1,7 +1,14 @@
 export type WeaponFamily = 'rifle' | 'shotgun' | 'smg';
+export const WEAPON_FAMILIES: readonly WeaponFamily[] = ['rifle', 'shotgun', 'smg'];
 
-/** Palette slots used by weapon parts. Skins only recolour slots — they never touch stats. */
-export type PaletteSlot = 'primary' | 'secondary' | 'accent' | 'dark' | 'emissive';
+/** Special modules that add a gameplay effect (Milestone 3). */
+export type ModuleId = 'energy' | 'explosive' | 'freeze';
+
+/**
+ * Palette slots used by weapon parts. Skins only recolour skin slots — they never touch stats.
+ * `module` is coloured by the weapon's special module (gameplay information, not cosmetic).
+ */
+export type PaletteSlot = 'primary' | 'secondary' | 'accent' | 'dark' | 'emissive' | 'module';
 
 export interface SkinPalette {
   id: string;
@@ -39,6 +46,8 @@ export interface WeaponStats {
   reserveMax: number;
   /** Additional enemies a bullet passes through. */
   pierce: number;
+  /** Fractional FOV reduction when aiming down sights. */
+  adsZoom: number;
 }
 
 /** One axis-aligned box of the weapon model in viewmodel space (metres; +z = forward). */
@@ -62,4 +71,27 @@ export interface WeaponDefinition {
   sightHeight: number;
   /** Component ids, for analytics and display. */
   components: string[];
+  /** Human-readable component names for the loadout / crate UI. */
+  componentNames: string[];
+  module: ModuleId | null;
+  /** Number of non-standard components (0–5): drives crate rarity colour. */
+  tier: number;
 }
+
+export const MODULE_INFO: Record<ModuleId, { name: string; prefix: string; color: string; description: string }> = {
+  energy: { name: 'Energy module', prefix: 'Arc', color: '#4fe3ff', description: '22% chance per hit to chain lightning to 2 nearby enemies.' },
+  explosive: { name: 'Explosive module', prefix: 'Volatile', color: '#ff8a2a', description: 'Kills with this weapon trigger a small explosion.' },
+  freeze: { name: 'Freeze module', prefix: 'Cryo', color: '#9fe8ff', description: 'Hits chill enemies, slowing them by 45% for 1.5 s.' },
+};
+
+/** Module tuning. */
+export const MODULE_TUNING = {
+  chainChance: 0.22,
+  chainTargets: 2,
+  chainRange: 6,
+  chainDamage: 0.5,
+  explosionRadius: 2.2,
+  explosionDamage: 24,
+  slowDuration: 1.5,
+  slowFactor: 0.55,
+} as const;

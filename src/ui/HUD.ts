@@ -1,9 +1,12 @@
 import type { SkinPalette, WeaponDefinition } from '../combat/WeaponTypes';
+import { drawWeaponIcon } from './weaponIcon';
 import { WavePhase } from '../waves/WaveManager';
 import { ICONS, h, setStyle, setText } from './dom';
 import { Minimap } from './Minimap';
 import type { OwnedUpgrade } from '../upgrades/UpgradeManager';
-import { upgradeIcon } from './icons';
+import { ICONS as LIB_ICONS, upgradeIcon } from './icons';
+import type { MutationDef } from '../upgrades/SynergyManager';
+import { TIER_COLORS, TIER_NAMES } from '../pickups/WeaponCrates';
 
 export interface HudSnapshot {
   health: number;
@@ -34,6 +37,8 @@ export interface HudSnapshot {
   waveLabel?: string;
   /** Dash cooldown 0 (ready) .. 1 (just used); undefined when dash is locked. */
   dashCooldown?: number;
+  /** Grenade cooldown 0..1; undefined when locked. */
+  grenadeCooldown?: number;
 }
 
 interface DamageIndicator {
@@ -65,7 +70,14 @@ export class HUD {
   private reserveEl: HTMLElement;
   private weaponName: HTMLElement;
   private weaponIcon: HTMLCanvasElement;
-  private slotIcon: HTMLCanvasElement;
+  private slotsEl: HTMLElement;
+  private bossBar: HTMLElement;
+  private bossFill: HTMLElement;
+  private bossName: HTMLElement;
+  private bossPips: HTMLElement[] = [];
+  private prompt: HTMLElement;
+  private grenadeSlot: HTMLElement | null = null;
+  private grenadeShade: HTMLElement | null = null;
   private shieldBar: HTMLElement;
   private abilityBar: HTMLElement;
   private dashSlot: HTMLElement | null = null;
@@ -106,7 +118,12 @@ export class HUD {
     this.reserveEl = h('span', { class: 'ammo-reserve' }, '/ 150');
     this.weaponName = h('div', { class: 'weapon-name' }, '');
     this.weaponIcon = h('canvas', { class: 'weapon-icon', width: 192, height: 72 });
-    this.slotIcon = h('canvas', { class: 'slot-icon', width: 128, height: 48 });
+    this.slotsEl = h('div', { class: 'weapon-slots' });
+    this.bossFill = h('div', { class: 'bar-fill boss' });
+    this.bossName = h('span', { class: 'boss-name' });
+    for (let i = 0; i < 3; i++) this.bossPips.push(h('i', { class: 'boss-pip' }));
+    this.bossBar = h('div', { class: 'boss-bar hidden' }, h('div', { class: 'boss-head' }, this.bossName, h('span', { class: 'boss-pips' }, ...this.bossPips)), h('div', { class: 'bar boss-track' }, this.bossFill));
+    this.prompt = h('div', { class: 'interact-prompt hidden' });
     this.shieldFill = h('div', { class: 'bar-fill shield' });
     this.shieldBar = h('div', { class: 'bar shield-bar hidden' }, this.shieldFill);
     this.abilityBar = h('div', { class: 'hud-bc ability-bar' });
@@ -139,7 +156,7 @@ export class HUD {
       this.damageFlash,
       indicatorLayer,
       h('div', { class: 'hud-tl' }, h('div', { class: 'minimap-frame' }, this.minimap.canvas)),
-      h('div', { class: 'hud-tc' }, h('div', { class: 'wave-tab' }, this.waveLabel), h('div', { class: 'wave-bar' }, h('div', { class: 'wave-track' }, this.waveFill), this.waveCount)),
+      h('div', { class: 'hud-tc' }, h('div', { class: 'wave-tab' }, this.waveLabel), h('div', { class: 'wave-bar' }, h('div', { class: 'wave-track' }, this.waveFill), this.waveCount), this.bossBar),
       h(
         'div',
         { class: 'hud-tr' },
@@ -164,7 +181,7 @@ export class HUD {
       h(
         'div',
         { class: 'hud-br' },
-        h('div', { class: 'weapon-slots' }, h('div', { class: 'weapon-slot active' }, h('b', { class: 'slot-num' }, '1'), this.slotIcon)),
+        this.slotsEl,
         this.reloadBar,
         h(
           'div',
@@ -174,6 +191,7 @@ export class HUD {
         ),
       ),
       this.abilityBar,
+      this.prompt,
       this.fpsEl,
       this.debugEl,
     );
@@ -181,14 +199,23 @@ export class HUD {
     drawPortrait(this.root.querySelector('.portrait') as HTMLCanvasElement);
   }
 
-  /** Rebuilds the bottom-centre bar: active abilities (with key + cooldown) then passive upgrades. */
-  setBuild(owned: OwnedUpgrade[], dashUnlocked: boolean): void {
+  /** Rebuilds the bottom-centre bar: active abilities (key + cooldown), passive upgrades, mutations. */
+  setBuild(owned: OwnedUpgrade[], dashUnlocked: boolean, grenadeUnlocked = false, mutations: MutationDef[] = []): void {
     const slots: HTMLElement[] = [];
     this.dashSlot = this.dashShade = null;
+    this.grenadeSlot = this.grenadeShade = null;
     if (dashUnlocked) {
       this.dashShade = h('div', { class: 'ability-cooldown' });
       this.dashSlot = h('div', { class: 'ability-slot active-ability cat-utility' }, h('div', { class: 'ability-icon', html: upgradeIcon('dashCharge') }), this.dashShade, h('kbd', { class: 'ability-key' }, 'Q'));
       slots.push(this.dashSlot);
+    }
+    if (grenadeUnlocked) {
+      this.grenadeShade = h('div', { class: 'ability-cooldown' });
+      this.grenadeSlot = h('div', { class: 'ability-slot active-ability cat-offense' }, h('div', { class: 'ability-icon', html: LIB_ICONS.grenade }), this.grenadeShade, h('kbd', { class: 'ability-key' }, 'G'));
+      slots.push(this.grenadeSlot);
+    }
+    for (const m of mutations) {
+      slots.push(h('div', { class: 'ability-slot passive mutation', title: `${m.name}: ${m.description}` }, h('div', { class: 'ability-icon', html: LIB_ICONS.trophy })));
     }
     for (const o of owned) {
       if (o.def.id === 'dashCharge') continue;
@@ -204,6 +231,27 @@ export class HUD {
     this.abilityBar.replaceChildren(...slots);
   }
 
+  /** Boss health bar under the wave tracker (null hides it). */
+  setBoss(name: string | null, hpFraction = 1, phase = 1): void {
+    this.bossBar.classList.toggle('hidden', name === null);
+    if (name === null) return;
+    setText(this.bossName, name.toUpperCase());
+    setStyle(this.bossFill, 'transform', `scaleX(${Math.max(0, hpFraction)})`);
+    this.bossPips.forEach((p, i) => p.classList.toggle('on', i < phase));
+  }
+
+  /** "[F] TAKE weapon" prompt when standing next to a crate. */
+  setPrompt(def: WeaponDefinition | null, touch: boolean): void {
+    this.prompt.classList.toggle('hidden', !def);
+    if (!def) return;
+    const tier = Math.min(def.tier, 5);
+    const key = touch ? 'TAP TAKE' : 'F';
+    const sig = `${key}|${def.id}`;
+    if (this.prompt.dataset.sig === sig) return;
+    this.prompt.dataset.sig = sig;
+    this.prompt.replaceChildren(h('kbd', null, key), h('span', null, 'TAKE '), h('b', { style: `color:${TIER_COLORS[tier]}` }, def.name), h('small', null, ` · ${TIER_NAMES[tier]}`));
+  }
+
   show(): void {
     this.root.classList.remove('hidden');
   }
@@ -212,11 +260,24 @@ export class HUD {
     this.root.classList.add('hidden');
   }
 
-  setWeapon(def: WeaponDefinition, skin: SkinPalette): void {
-    setText(this.weaponName, def.name.toUpperCase());
-    drawWeaponIcon(this.weaponIcon, def, skin, '#f2f5fb');
-    drawWeaponIcon(this.slotIcon, def, skin, '#9aa7bd');
+  /** Weapon inventory (up to 3 slots) plus the held weapon's name and icon. */
+  setWeapons(slots: readonly { def: WeaponDefinition }[], current: number, skin: SkinPalette, displayName: string): void {
+    setText(this.weaponName, displayName.toUpperCase());
+    drawWeaponIcon(this.weaponIcon, slots[current]!.def, skin, '#f2f5fb');
+    this.slotsEl.replaceChildren(
+      ...slots.map((slot, i) => {
+        const c = h('canvas', { class: 'slot-icon', width: 128, height: 48 });
+        drawWeaponIcon(c, slot.def, skin, i === current ? '#e3ebf8' : '#8592a8');
+        return h('div', { class: `weapon-slot ${i === current ? 'active' : ''}` }, h('b', { class: 'slot-num' }, String(i + 1)), c);
+      }),
+    );
   }
+
+  setWeapon(def: WeaponDefinition, skin: SkinPalette): void {
+    this.setWeapons([{ def }], 0, skin, def.name);
+  }
+
+
 
   resetRun(maxHealth: number): void {
     this.ghostHp = maxHealth;
@@ -314,6 +375,10 @@ export class HUD {
     if (maxShield > 0) setStyle(this.shieldFill, 'transform', `scaleX(${Math.max(0, (s.shield ?? 0) / maxShield)})`);
     setStyle(this.vignette, 'opacity', hpFrac < 0.35 ? String((0.35 - hpFrac) * 2.4) : '0');
 
+    if (this.grenadeShade && s.grenadeCooldown !== undefined) {
+      setStyle(this.grenadeShade, 'transform', `scaleY(${s.grenadeCooldown})`);
+      this.grenadeSlot!.classList.toggle('ready', s.grenadeCooldown <= 0);
+    }
     // --- Dash cooldown sweep ---
     if (this.dashShade && s.dashCooldown !== undefined) {
       setStyle(this.dashShade, 'transform', `scaleY(${s.dashCooldown})`);
@@ -356,35 +421,6 @@ export class HUD {
       this.toastTimer -= dt;
       if (this.toastTimer <= 0) this.toastEl.classList.remove('show');
     }
-  }
-}
-
-/** Side-view silhouette of the procedural weapon, drawn from its actual parts and skin. */
-function drawWeaponIcon(canvas: HTMLCanvasElement, def: WeaponDefinition, skin: SkinPalette, mono?: string): void {
-  const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const parts = [...def.parts, ...def.magazine];
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const p of parts) {
-    minZ = Math.min(minZ, p.c[2] - p.s[2] / 2);
-    maxZ = Math.max(maxZ, p.c[2] + p.s[2] / 2);
-    minY = Math.min(minY, p.c[1] - p.s[1] / 2);
-    maxY = Math.max(maxY, p.c[1] + p.s[1] / 2);
-  }
-  const pad = 4;
-  const scale = Math.min((canvas.width - pad * 2) / (maxZ - minZ), (canvas.height - pad * 2) / (maxY - minY));
-  const offX = (canvas.width - (maxZ - minZ) * scale) / 2;
-  const offY = (canvas.height - (maxY - minY) * scale) / 2;
-  // Draw largest parts first so details sit on top.
-  const sorted = parts.slice().sort((a, b) => b.s[0] * b.s[1] * b.s[2] - a.s[0] * a.s[1] * a.s[2]);
-  for (const p of sorted) {
-    ctx.fillStyle = mono ?? skin[p.slot];
-    const x = offX + (p.c[2] - p.s[2] / 2 - minZ) * scale;
-    const y = offY + (maxY - (p.c[1] + p.s[1] / 2)) * scale;
-    ctx.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(p.s[2] * scale)), Math.max(1, Math.round(p.s[1] * scale)));
   }
 }
 

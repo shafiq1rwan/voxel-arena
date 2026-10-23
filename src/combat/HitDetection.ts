@@ -1,11 +1,11 @@
-import type { Enemy, EnemyRayHit } from '../enemies/Enemy';
+import type { Enemy, EnemyRayHit, HitZone } from '../enemies/Enemy';
 import { EnemyState } from '../enemies/EnemyTypes';
 import type { RayHit, VoxelWorld } from '../world/VoxelWorld';
 
 export interface ShotHit {
   enemy: Enemy;
   distance: number;
-  headshot: boolean;
+  zone: HitZone;
 }
 
 export interface ShotResult {
@@ -22,7 +22,7 @@ export interface ShotResult {
   nz: number;
 }
 
-const enemyHit: EnemyRayHit = { t: 0, headshot: false };
+const enemyHit: EnemyRayHit = { t: 0, zone: 'body' };
 const worldHit: RayHit = { distance: 0, x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0 };
 const candidates: ShotHit[] = [];
 
@@ -52,11 +52,11 @@ export class HitDetection {
       if (e.state === EnemyState.Spawning && e.stateTime < 0.35) continue;
       const hit = e.rayTest(ox, oy, oz, dx, dy, dz, enemyHit);
       if (!hit || hit.t > maxT) continue;
-      const entry = this.hitPool[poolIdx] ?? (this.hitPool[poolIdx] = { enemy: e, distance: 0, headshot: false });
+      const entry = this.hitPool[poolIdx] ?? (this.hitPool[poolIdx] = { enemy: e, distance: 0, zone: 'body' });
       poolIdx++;
       entry.enemy = e;
       entry.distance = hit.t;
-      entry.headshot = hit.headshot;
+      entry.zone = hit.zone;
       candidates.push(entry);
     }
     candidates.sort((a, b) => a.distance - b.distance);

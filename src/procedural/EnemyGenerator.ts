@@ -25,6 +25,10 @@ export interface EnemyLook {
   gun: boolean;
   /** Emissive eye/core colour family; also tells players which archetype they face. */
   eyes: 'red' | 'cyan';
+  /** Relative size of the glowing chest core (weak point on tanks and the boss). */
+  coreSize: number;
+  /** Elite: gold trim and crown. */
+  elite: boolean;
 }
 
 /** [body, accent, limbs]. Saturated reds/oranges so chasers read instantly against any theme. */
@@ -44,16 +48,26 @@ const SHOOTER_PALETTES: readonly [string, string, string][] = [
   ['#2d86b8', '#c4f6ff', '#18232e'],
 ];
 
-export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom): EnemyLook {
+/** Heavy browns/bronzes with orange accents: tanks read as armoured and slow. */
+const TANK_PALETTES: readonly [string, string, string][] = [
+  ['#7a5a3a', '#ff8a2a', '#2e2620'],
+  ['#6b6258', '#ffa040', '#26221e'],
+  ['#80603a', '#ffb347', '#30261a'],
+];
+
+const GOLD = hexToRgb('#f2c94c');
+
+export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom, elite = false): EnemyLook {
   const jitter = (c: RGB) => {
     const k = rng.range(0.88, 1.12);
     return { r: c.r * k, g: c.g * k, b: c.b * k };
   };
+  let look: EnemyLook;
   switch (archetype) {
     case 'shooter': {
       const [body, accent, limbs] = rng.pick(SHOOTER_PALETTES);
       const bodyRgb = jitter(hexToRgb(body));
-      return {
+      look = {
         body: bodyRgb,
         limbs: jitter(hexToRgb(limbs)),
         head: mixRgb(bodyRgb, hexToRgb(limbs), rng.range(0.15, 0.4)),
@@ -69,13 +83,61 @@ export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom): En
         backpack: rng.chance(0.7),
         gun: true,
         eyes: 'cyan',
+        coreSize: 1,
+        elite,
       };
+      break;
+    }
+    case 'tank': {
+      const [body, accent, limbs] = rng.pick(TANK_PALETTES);
+      const bodyRgb = jitter(hexToRgb(body));
+      look = {
+        body: bodyRgb,
+        limbs: jitter(hexToRgb(limbs)),
+        head: mixRgb(bodyRgb, hexToRgb(limbs), 0.4),
+        accent: hexToRgb(accent),
+        // Big, broad, small-headed: an unmistakable heavy silhouette.
+        scale: rng.range(1.38, 1.5),
+        bodyWidth: rng.range(0.78, 0.86),
+        bodyHeight: rng.range(0.66, 0.74),
+        headSize: rng.range(0.3, 0.34),
+        armLength: rng.range(0.66, 0.74),
+        horns: rng.chance(0.4),
+        armor: true,
+        backpack: true,
+        gun: false,
+        eyes: 'red',
+        coreSize: 2.4,
+        elite,
+      };
+      break;
+    }
+    case 'boss': {
+      look = {
+        body: hexToRgb('#2a2230'),
+        limbs: hexToRgb('#17121c'),
+        head: hexToRgb('#3a2a3a'),
+        accent: hexToRgb('#ff3a3a'),
+        scale: 2.5,
+        bodyWidth: 0.86,
+        bodyHeight: 0.72,
+        headSize: 0.42,
+        armLength: 0.74,
+        horns: true,
+        armor: true,
+        backpack: true,
+        gun: false,
+        eyes: 'red',
+        coreSize: 2.8,
+        elite: true,
+      };
+      break;
     }
     case 'chaser':
     default: {
       const [body, accent, limbs] = rng.pick(CHASER_PALETTES);
       const bodyRgb = jitter(hexToRgb(body));
-      return {
+      look = {
         body: bodyRgb,
         limbs: jitter(hexToRgb(limbs)),
         head: mixRgb(bodyRgb, hexToRgb(accent), rng.range(0, 0.25)),
@@ -90,7 +152,17 @@ export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom): En
         backpack: rng.chance(0.25),
         gun: false,
         eyes: 'red',
+        coreSize: 1,
+        elite,
       };
     }
   }
+  if (elite && archetype !== 'boss') {
+    // Elites: larger, gold-trimmed, always armoured and horned.
+    look.scale *= 1.15;
+    look.accent = GOLD;
+    look.armor = true;
+    look.horns = true;
+  }
+  return look;
 }

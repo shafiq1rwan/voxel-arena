@@ -45,7 +45,7 @@ export interface GameEvents {
   'wave:completed': { wave: number; timeSec: number };
   'enemy:spawned': { id: number; archetype: string };
   'enemy:damaged': { id: number; amount: number; headshot: boolean; critical: boolean; killed: boolean; point: Vec3Like };
-  'enemy:killed': { id: number; archetype: string; headshot: boolean; weaponFamily: string; position: Vec3Like; firstOfRun: boolean };
+  'enemy:killed': { id: number; archetype: string; headshot: boolean; weaponFamily: string; position: Vec3Like; firstOfRun: boolean; elite: boolean; reward: number };
   'player:damaged': { amount: number; fromX: number; fromZ: number; health: number };
   'player:healed': { amount: number; health: number };
   'player:died': { wave: number };
@@ -59,4 +59,12 @@ export interface GameEvents {
   'upgrade:offered': { wave: number; ids: string[] };
   'upgrade:selected': { id: string; wave: number; stacks: number; build: string };
   'explosion': { x: number; y: number; z: number; radius: number };
+  'weapon:lightning': { hits: number };
+  'weapon:pickedUp': { name: string; family: string; tier: number };
+  'boss:phase': { phase: number };
+  'mutation:activated': { id: string; name: string };
+  'achievement:unlocked': { id: string; name: string; scrap: number };
+  'skin:equipped': { id: string };
+  'unlock:purchased': { id: string; cost: number };
+  'player:revived': Record<string, never>;
 }

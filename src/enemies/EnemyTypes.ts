@@ -1,4 +1,4 @@
-export type ArchetypeId = 'chaser' | 'shooter';
+export type ArchetypeId = 'chaser' | 'shooter' | 'tank' | 'boss';
 
 /** Ranged-attack tuning for archetypes that fire projectiles. */
 export interface RangedDef {
@@ -38,11 +38,27 @@ export interface ArchetypeDef {
   staggerTime: number;
   /** Score value. */
   reward: number;
+  /** Multiplier on the weapon's headshot bonus (armoured heads < 1). */
+  headMultiplier: number;
+  /** 0..1 resistance to knockback. */
+  knockbackResist: number;
+  /** Only weak-point (core) hits stagger this archetype. */
+  staggerOnlyOnCore: boolean;
+  /** Has a glowing chest core that takes 2.5× damage. */
+  weakPoint: boolean;
   ranged?: RangedDef;
 }
 
+const base = {
+  headMultiplier: 1,
+  knockbackResist: 0,
+  staggerOnlyOnCore: false,
+  weakPoint: false,
+};
+
 export const ARCHETYPES: Record<ArchetypeId, ArchetypeDef> = {
   chaser: {
+    ...base,
     id: 'chaser',
     displayName: 'Chaser',
     maxHealth: 60,
@@ -58,6 +74,7 @@ export const ARCHETYPES: Record<ArchetypeId, ArchetypeDef> = {
     reward: 10,
   },
   shooter: {
+    ...base,
     id: 'shooter',
     displayName: 'Shooter',
     maxHealth: 45,
@@ -81,7 +98,57 @@ export const ARCHETYPES: Record<ArchetypeId, ArchetypeDef> = {
       maxRange: 26,
     },
   },
+  tank: {
+    ...base,
+    id: 'tank',
+    displayName: 'Tank',
+    maxHealth: 220,
+    damage: 15,
+    speed: 2.4,
+    attackRange: 2.1,
+    attackHitRange: 2.7,
+    attackWindup: 0.85,
+    attackRecover: 1.0,
+    radius: 0.5,
+    threatCost: 5,
+    staggerTime: 0.45,
+    reward: 40,
+    headMultiplier: 0.5,
+    knockbackResist: 0.85,
+    staggerOnlyOnCore: true,
+    weakPoint: true,
+  },
+  boss: {
+    ...base,
+    id: 'boss',
+    displayName: 'Obsidian Colossus',
+    maxHealth: 2500,
+    damage: 18,
+    speed: 2.2,
+    attackRange: 3,
+    attackHitRange: 3.6,
+    attackWindup: 0.6,
+    attackRecover: 0.8,
+    radius: 0.9,
+    threatCost: 0,
+    staggerTime: 0,
+    reward: 500,
+    headMultiplier: 0.75,
+    knockbackResist: 1,
+    staggerOnlyOnCore: true,
+    weakPoint: true,
+  },
 };
+
+/** Elite variants: one extra ability per base archetype. */
+export const ELITE_INFO: Record<'chaser' | 'shooter' | 'tank', { name: string; ability: string }> = {
+  chaser: { name: 'Berserker', ability: 'Leaps at you from range' },
+  shooter: { name: 'Gunner', ability: 'Fires three-bolt bursts' },
+  tank: { name: 'Warden', ability: 'Wide slam and regenerating armour' },
+};
+
+export const ELITE_HEALTH = 2.2;
+export const ELITE_COST_BONUS = 4;
 
 export enum EnemyState {
   Inactive = 'INACTIVE',
@@ -95,5 +162,9 @@ export enum EnemyState {
   Attack = 'ATTACK',
   Recover = 'RECOVER',
   Stunned = 'STUNNED',
+  /** Elite chaser airborne leap. */
+  Leap = 'LEAP',
+  /** Boss phase-change roar (invulnerable to stagger, brief pause). */
+  Roar = 'ROAR',
   Dead = 'DEAD',
 }

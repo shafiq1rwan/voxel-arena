@@ -28,6 +28,8 @@ export class InputManager {
     s.lookPitch = 0;
     s.fire = s.aim = s.sprint = s.jumpPressed = s.jumpHeld = s.reloadPressed = s.abilityPressed = s.pausePressed = false;
     s.weaponSlot = 0;
+    s.weaponCycle = 0;
+    s.interactPressed = s.grenadePressed = false;
     for (const p of this.providers) p.poll(s);
     // Normalise diagonal movement.
     const len = Math.hypot(s.moveX, s.moveY);

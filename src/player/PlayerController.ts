@@ -33,7 +33,16 @@ export class PlayerController {
   dashUnlocked = false;
   /** Seconds until the dash is ready again. */
   dashCooldown = 0;
-  readonly dashCooldownMax = 3.5;
+  /** Phantom Step mutation shortens this. */
+  dashCooldownMul = 1;
+  get dashCooldownMax(): number {
+    return 3.5 * this.dashCooldownMul;
+  }
+  /** Juggernaut (<1) and Glass Cannon (>1) scale incoming damage. */
+  damageTakenMul = 1;
+  /** Accessibility: camera shake strength 0..1 and head bob toggle. */
+  shakeScale = 1;
+  headBob = true;
   /** Seconds remaining in the current dash (0 when not dashing). */
   dashTime = 0;
 
@@ -70,6 +79,8 @@ export class PlayerController {
     this.health = this.maxHealth = P.maxHealth;
     this.alive = true;
     this.speedMultiplier = 1;
+    this.dashCooldownMul = 1;
+    this.damageTakenMul = 1;
     this.invulnerable = 0;
     this.iframes = 0;
     this.lastStandCharges = 0;
@@ -205,7 +216,7 @@ export class PlayerController {
   private applyCamera(dt: number): void {
     // Head bob while walking on the ground.
     if (this.grounded && this.moveAmount > 0.1) this.bobPhase += dt * (6.5 + this.moveAmount * 4);
-    const bobAmp = this.grounded ? Math.min(1, this.moveAmount) * 0.035 : 0;
+    const bobAmp = this.grounded && this.headBob ? Math.min(1, this.moveAmount) * 0.035 : 0;
     const bobY = Math.abs(Math.sin(this.bobPhase)) * bobAmp * 1.4;
     const bobX = Math.cos(this.bobPhase) * bobAmp * 0.6;
 
@@ -216,7 +227,7 @@ export class PlayerController {
     // Trauma shake: amplitude scales with trauma^2 for punchy-but-short shakes.
     this.trauma = Math.max(0, this.trauma - dt * 1.6);
     this.shakeTime += dt * 30;
-    const shake = this.trauma * this.trauma;
+    const shake = this.trauma * this.trauma * this.shakeScale;
     const sx = (Math.sin(this.shakeTime * 1.1) + Math.sin(this.shakeTime * 2.3) * 0.5) * shake * 0.035;
     const sy = (Math.sin(this.shakeTime * 1.7 + 1.3) + Math.sin(this.shakeTime * 3.1) * 0.5) * shake * 0.035;
     const sr = Math.sin(this.shakeTime * 1.3 + 2.1) * shake * 0.05;
@@ -247,6 +258,7 @@ export class PlayerController {
   damage(amount: number, fromX: number, fromZ: number, contact: boolean): boolean {
     if (!this.alive || this.iframes > 0) return false;
     if (contact && this.invulnerable > 0) return false;
+    amount *= this.damageTakenMul;
     if (this.health - amount <= 0 && this.lastStandCharges > 0) {
       // Last Stand: cling on at 1 HP with a moment of invulnerability to escape.
       this.lastStandCharges--;
@@ -263,6 +275,15 @@ export class PlayerController {
     this.bus.emit('player:damaged', { amount, fromX, fromZ, health: this.health });
     if (this.health <= 0) this.alive = false;
     return true;
+  }
+
+  /** Rewarded revive: back on your feet with part of your health and a few seconds of safety. */
+  revive(healthFraction: number): void {
+    this.alive = true;
+    this.health = Math.max(1, Math.round(this.maxHealth * healthFraction));
+    this.iframes = 2.5;
+    this.vx = this.vy = this.vz = 0;
+    this.trauma = 0;
   }
 
   /** Sets max health (e.g. from Reinforced Armor) without changing current health. */

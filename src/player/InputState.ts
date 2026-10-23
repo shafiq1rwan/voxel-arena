@@ -20,6 +20,12 @@ export interface InputState {
   pausePressed: boolean;
   /** 1-based weapon slot requested this frame, or 0. */
   weaponSlot: number;
+  /** -1 / +1 to cycle weapons (mouse wheel, touch), 0 otherwise. */
+  weaponCycle: number;
+  /** Pick up / interact (F). */
+  interactPressed: boolean;
+  /** Throw grenade (G). */
+  grenadePressed: boolean;
 }
 
 export function createInputState(): InputState {
@@ -37,6 +43,9 @@ export function createInputState(): InputState {
     abilityPressed: false,
     pausePressed: false,
     weaponSlot: 0,
+    weaponCycle: 0,
+    interactPressed: false,
+    grenadePressed: false,
   };
 }
 

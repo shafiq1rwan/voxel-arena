@@ -60,6 +60,8 @@ export interface ArenaOptions {
   /** Playable interior size in cells/metres. */
   interiorSize: number;
   themeId?: ThemeId;
+  /** Themes the seed may pick from (unlocked themes); defaults to all. */
+  themePool?: ThemeId[];
   boundaryHeight: number;
   centerClearRadius: number;
   perimeterMargin: number;

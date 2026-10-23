@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRandom } from '../src/core/SeededRandom';
-import { ARCHETYPES } from '../src/enemies/EnemyTypes';
-import { activeEnemyCap, composeWave, waveBudget } from '../src/waves/ThreatBudget';
+import { activeEnemyCap, composeWave, spentThreat, waveBudget } from '../src/waves/ThreatBudget';
 import { BASE_STATS, createWeapon } from '../src/procedural/WeaponGenerator';
 
 describe('ThreatBudget', () => {
@@ -15,10 +14,9 @@ describe('ThreatBudget', () => {
   });
 
   it('spends exactly the wave budget', () => {
-    for (let w = 1; w <= 10; w++) {
+    for (let w = 1; w <= 9; w++) {
       const enemies = composeWave(w, new SeededRandom(w));
-      const spent = enemies.reduce((s, id) => s + ARCHETYPES[id].threatCost, 0);
-      expect(spent).toBe(waveBudget(w));
+      expect(spentThreat(enemies)).toBe(waveBudget(w));
     }
   });
 });

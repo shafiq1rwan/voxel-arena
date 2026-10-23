@@ -101,6 +101,8 @@ export class PickupSystem {
     this.bus.on('enemy:killed', (e) => this.onEnemyKilled(e.position.x, e.position.y, e.position.z));
   }
 
+  /** Iron Man challenge disables health pickups. */
+  allowHealth = true;
   private player: PlayerController | null = null;
   private weapons: WeaponSystem | null = null;
   private rng: SeededRandom | null = null;
@@ -122,7 +124,7 @@ export class PickupSystem {
     const r = this.rng.next();
     const pHealth = CONFIG.pickups.healthDropChance * (lowHealth ? 2 : 1);
     const pAmmo = CONFIG.pickups.ammoDropChance * (lowAmmo ? 2 : 1);
-    if (r < pHealth) this.spawn('health', x, y + 0.8, z, CONFIG.pickups.lifetime);
+    if (r < pHealth && this.allowHealth) this.spawn('health', x, y + 0.8, z, CONFIG.pickups.lifetime);
     else if (r < pHealth + pAmmo) this.spawn('ammo', x, y + 0.8, z, CONFIG.pickups.lifetime);
   }
 
@@ -130,7 +132,7 @@ export class PickupSystem {
   placeMapPickups(): void {
     if (!this.data || !this.rng || this.data.pickupPoints.length === 0) return;
     const pts = this.rng.shuffle([...this.data.pickupPoints]);
-    const kinds: PickupKind[] = ['health', 'ammo'];
+    const kinds: PickupKind[] = this.allowHealth ? ['health', 'ammo'] : ['ammo'];
     for (let i = 0; i < kinds.length && i < pts.length; i++) {
       const p = pts[i]!;
       const wx = p.x + 0.5;

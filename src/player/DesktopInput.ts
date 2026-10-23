@@ -26,6 +26,9 @@ export class DesktopInput implements InputProvider {
   private abilityEdge = false;
   private pauseEdge = false;
   private slotEdge = 0;
+  private cycleEdge = 0;
+  private interactEdge = false;
+  private grenadeEdge = false;
   private enabled = false;
   private wasLocked = false;
   private disposers: (() => void)[] = [];
@@ -61,6 +64,10 @@ export class DesktopInput implements InputProvider {
     });
     on(window, 'pointerup', (e) => {
       if (e.pointerType === 'mouse') this.mouseButtons = e.buttons;
+    });
+    on(document, 'wheel', (e) => {
+      if (!this.capturing || Math.abs(e.deltaY) < 1) return;
+      this.cycleEdge = e.deltaY > 0 ? 1 : -1;
     });
     on(document, 'contextmenu', (e) => {
       if (this.isLocked || e.target === this.canvas) e.preventDefault();
@@ -143,6 +150,8 @@ export class DesktopInput implements InputProvider {
         if (code === 'Space') this.jumpEdge = true;
         if (code === 'KeyR') this.reloadEdge = true;
         if (code === 'KeyQ') this.abilityEdge = true;
+        if (code === 'KeyF') this.interactEdge = true;
+        if (code === 'KeyG') this.grenadeEdge = true;
         if (code === 'KeyP' || code === 'Escape') this.pauseEdge = true;
         if (code.startsWith('Digit')) {
           const n = parseInt(code.slice(5), 10);
@@ -175,6 +184,9 @@ export class DesktopInput implements InputProvider {
     state.abilityPressed ||= this.abilityEdge;
     state.pausePressed ||= this.pauseEdge;
     if (this.slotEdge) state.weaponSlot = this.slotEdge;
+    if (this.cycleEdge) state.weaponCycle = this.cycleEdge;
+    state.interactPressed ||= this.interactEdge;
+    state.grenadePressed ||= this.grenadeEdge;
 
     this.lookX = 0;
     this.lookY = 0;
@@ -183,6 +195,9 @@ export class DesktopInput implements InputProvider {
     this.abilityEdge = false;
     this.pauseEdge = false;
     this.slotEdge = 0;
+    this.cycleEdge = 0;
+    this.interactEdge = false;
+    this.grenadeEdge = false;
   }
 
   reset(): void {
@@ -192,6 +207,8 @@ export class DesktopInput implements InputProvider {
     this.lookY = 0;
     this.jumpEdge = this.reloadEdge = this.abilityEdge = this.pauseEdge = false;
     this.slotEdge = 0;
+    this.cycleEdge = 0;
+    this.interactEdge = this.grenadeEdge = false;
   }
 
   dispose(): void {

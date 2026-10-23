@@ -6,8 +6,62 @@ import type { Scene } from '@babylonjs/core/scene';
 import { damp, lerp } from '../core/MathUtil';
 import { VIEWMODEL_GROUP } from '../core/SceneManager';
 import type { MaterialLibrary } from '../render/Materials';
-import { VoxelMeshBuilder, hexToRgb } from '../render/VoxelMeshBuilder';
-import type { SkinPalette, WeaponDefinition, WeaponPart } from './WeaponTypes';
+import { hash2 } from '../core/SeededRandom';
+import { VoxelMeshBuilder, hexToRgb, mixRgb, type RGB } from '../render/VoxelMeshBuilder';
+import type { SkinDef } from '../progression/Skins';
+import { MODULE_INFO, type WeaponDefinition, type WeaponPart } from './WeaponTypes';
+
+type SkinSlot = 'primary' | 'secondary' | 'accent' | 'dark' | 'emissive';
+const box = (c: [number, number, number], s: [number, number, number], slot: WeaponPart['slot']): WeaponPart => ({ c, s, slot });
+
+/** Pattern colour for one part. Skins vary colour across parts; they never change geometry or stats. */
+function partColor(skin: SkinDef, part: WeaponPart, index: number): RGB {
+  // Module parts are coloured by their material (module colour), not by the skin.
+  if (part.slot === 'module') return { r: 1, g: 1, b: 1 };
+  const slot = part.slot as SkinSlot;
+  const base = hexToRgb(skin[slot]);
+  const body = slot === 'primary' || slot === 'secondary';
+  switch (skin.pattern) {
+    case 'camo': {
+      if (!body) return base;
+      const r = hash2(index, 7, 31);
+      return r < 0.34 ? hexToRgb(skin.alt) : r < 0.6 ? hexToRgb(skin.secondary) : base;
+    }
+    case 'digital':
+      return body && index % 2 === 0 ? hexToRgb(skin.alt) : base;
+    case 'gold':
+      return slot === 'dark' ? mixRgb(base, hexToRgb(skin.secondary), 0.35) : base;
+    default:
+      return base;
+  }
+}
+
+/** Pattern decals (emissive cracks, lightning, pixels) placed on the receiver sides. */
+function skinDecals(skin: SkinDef): WeaponPart[] {
+  const out: WeaponPart[] = [];
+  const sides = [-0.054, 0.054];
+  switch (skin.pattern) {
+    case 'molten':
+      for (const x of sides) for (let k = 0; k < 5; k++) out.push(box([x, k % 2 ? 0.014 : -0.012, -0.06 + k * 0.05], [0.004, 0.006, 0.045], 'emissive'));
+      break;
+    case 'thunder':
+      for (const x of sides) {
+        out.push(box([x, 0.02, -0.04], [0.004, 0.006, 0.06], 'emissive'));
+        out.push(box([x, 0.005, 0.0], [0.004, 0.03, 0.006], 'emissive'));
+        out.push(box([x, -0.01, 0.05], [0.004, 0.006, 0.09], 'emissive'));
+      }
+      break;
+    case 'void':
+      for (const x of sides) out.push(box([x, 0.028, 0.05], [0.004, 0.005, 0.3], 'emissive'));
+      break;
+    case 'digital':
+      for (const x of sides) for (let k = 0; k < 4; k++) out.push(box([x, (k % 2) * 0.02 - 0.01, -0.04 + k * 0.045], [0.004, 0.012, 0.012], 'accent'));
+      break;
+    default:
+      break;
+  }
+  return out;
+}
 
 const HIP = new Vector3(0.22, -0.205, 0.49);
 
@@ -45,6 +99,11 @@ export class WeaponViewModel {
   private flashTime = 0;
   private sprintBlend = 0;
   private equip = 1;
+  /** Loadout preview: show the gun centred and slowly rotating instead of the first-person pose. */
+  private inspect = false;
+  private inspectSpin = 0;
+  /** Accessibility: smaller, shorter muzzle flashes. */
+  reduceFlashing = false;
 
   constructor(
     private scene: Scene,
@@ -71,19 +130,28 @@ export class WeaponViewModel {
     this.flash.setEnabled(false);
   }
 
-  /** Rebuilds the model for a weapon + skin. */
-  build(def: WeaponDefinition, skin: SkinPalette): void {
+  /**
+   * Rebuilds the model for a weapon + skin. A weapon mutation (upgrade synergy) recolours the
+   * glow parts and adds energy fins so the change is visible on the gun itself.
+   */
+  build(def: WeaponDefinition, skin: SkinDef, mutationColor: string | null = null): void {
     for (const m of this.meshes) m.dispose();
     this.meshes = [];
     this.def = def;
 
-    const colorOf = (slot: WeaponPart['slot']) => hexToRgb(skin[slot]);
     const body = new VoxelMeshBuilder();
     const glow = new VoxelMeshBuilder();
+    const moduleGlow = new VoxelMeshBuilder();
     const mag = new VoxelMeshBuilder();
-    const add = (b: VoxelMeshBuilder, p: WeaponPart) => b.addBox(p.c[0], p.c[1], p.c[2], p.s[0], p.s[1], p.s[2], colorOf(p.slot));
-    for (const p of def.parts) add(p.slot === 'emissive' ? glow : body, p);
-    for (const p of def.magazine) add(p.slot === 'emissive' ? glow : mag, p);
+    let index = 0;
+    const add = (b: VoxelMeshBuilder, p: WeaponPart) => b.addBox(p.c[0], p.c[1], p.c[2], p.s[0], p.s[1], p.s[2], partColor(skin, p, index++));
+    const route = (p: WeaponPart, other: VoxelMeshBuilder) => (p.slot === 'emissive' ? glow : p.slot === 'module' ? moduleGlow : other);
+    for (const p of [...def.parts, ...skinDecals(skin)]) add(route(p, body), p);
+    for (const p of def.magazine) add(route(p, mag), p);
+    if (mutationColor) {
+      // Mutation fins along the barrel shroud.
+      for (const x of [-0.05, 0.05]) glow.addBox(x, 0.035, 0.32, 0.006, 0.012, 0.2, { r: 1, g: 1, b: 1 }, { faceShade: false });
+    }
 
     // Block-built gloves and sleeves, using their own fixed palette so skins only recolour the gun.
     const hands = new VoxelMeshBuilder();
@@ -106,17 +174,32 @@ export class WeaponViewModel {
     };
     const handMesh = finish(hands.build('vm_hands', this.scene));
     handMesh.material = this.materials.vertexLit('hands', 0.02);
+    handMesh.setEnabled(!this.inspect);
+    this.handMesh = handMesh;
     const bodyMesh = finish(body.build('vm_body', this.scene));
     bodyMesh.material = this.materials.vertexLit('weapon', 0.25);
     if (glow.vertexCount > 0) {
       const g = finish(glow.build('vm_glow', this.scene, { colors: false }));
-      g.material = this.materials.emissive(skin.emissive, 1.2);
+      g.material = this.materials.emissive(mutationColor ?? skin.emissive, 1.2);
+    }
+    if (moduleGlow.vertexCount > 0 && def.module) {
+      const g = finish(moduleGlow.build('vm_module', this.scene, { colors: false }));
+      g.material = this.materials.emissive(MODULE_INFO[def.module].color, 1.4);
     }
     this.magazine = mag.vertexCount > 0 ? finish(mag.build('vm_mag', this.scene)) : null;
     if (this.magazine) this.magazine.material = this.materials.vertexLit('weapon', 0.25);
 
     this.muzzleNode.position.set(def.muzzle[0], def.muzzle[1], def.muzzle[2]);
     this.equip = 1;
+  }
+
+  private handMesh: Mesh | null = null;
+
+  /** Loadout preview mode (menu camera): centred, hands hidden, slowly turning. */
+  setInspect(on: boolean): void {
+    this.inspect = on;
+    this.handMesh?.setEnabled(!on);
+    this.inspectSpin = 0;
   }
 
   setVisible(v: boolean): void {
@@ -132,15 +215,24 @@ export class WeaponViewModel {
   onFire(strength: number): void {
     this.kickBack = Math.min(0.12, this.kickBack + 0.045 * strength);
     this.kickRot = Math.min(0.35, this.kickRot + 0.07 * strength);
-    this.flashTime = 0.05;
+    this.flashTime = this.reduceFlashing ? 0.03 : 0.05;
     this.flash.rotation.z = Math.random() * Math.PI;
-    const s = 0.8 + Math.random() * 0.6;
+    const s = (0.8 + Math.random() * 0.6) * (this.reduceFlashing ? 0.55 : 1);
     this.flash.scaling.set(s, s, s * (0.8 + Math.random() * 0.5));
   }
 
   update(st: ViewModelState): void {
     const dt = st.dt;
     if (!this.def) return;
+    if (this.inspect) {
+      // Inspect pose: weapon floats centre-right of the menu camera and turns slowly.
+      this.inspectSpin += dt * 0.6;
+      // Left of centre so the loadout panel on the right never covers it.
+      this.root.position.set(-0.36, -0.02, 1.55);
+      this.pivot.rotation.set(0.12, Math.PI / 2 + Math.sin(this.inspectSpin) * 0.9, 0);
+      this.flash.setEnabled(false);
+      return;
+    }
 
     // Sway lags behind camera rotation.
     this.swayX = lerp(this.swayX, -st.lookYaw * 1.2, damp(10, dt));

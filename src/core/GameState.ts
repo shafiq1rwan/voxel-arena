@@ -6,6 +6,10 @@ export enum AppState {
   Paused = 'PAUSED',
   /** Between-wave upgrade choice: combat halted, gameplay stopped for the platform. */
   Upgrade = 'UPGRADE',
+  /** Loadout screen over the menu backdrop (3D weapon preview). */
+  Loadout = 'LOADOUT',
+  /** Death screen offering an opt-in rewarded revive. */
+  Revive = 'REVIVE',
   GameOver = 'GAME_OVER',
   AdBreak = 'AD_BREAK',
 }

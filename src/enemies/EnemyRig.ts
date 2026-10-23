@@ -17,6 +17,8 @@ export class EnemyRenderer {
   readonly eye: Mesh;
   /** Cyan emissive variant (ranged archetypes' eyes, cores and blaster tips). */
   readonly eyeCyan: Mesh;
+  /** Gold emissive (elite and boss crowns). */
+  readonly gold: Mesh;
 
   constructor(scene: Scene, materials: MaterialLibrary) {
     const b = new VoxelMeshBuilder();
@@ -36,8 +38,10 @@ export class EnemyRenderer {
     this.eye.material = materials.emissive('#ff3a26', 1.5);
     this.eyeCyan = e.build('enemy_eye_cyan_src', scene, { colors: false });
     this.eyeCyan.material = materials.emissive('#3fd8ff', 1.5);
+    this.gold = e.build('enemy_gold_src', scene, { colors: false });
+    this.gold.material = materials.emissive('#ffcf4a', 1.3);
 
-    for (const src of [this.cube, this.eye, this.eyeCyan]) {
+    for (const src of [this.cube, this.eye, this.eyeCyan, this.gold]) {
       src.isPickable = false;
       // Sources stay enabled (instances render through them) but are hidden far below the map.
       src.position.set(0, -500, 0);
@@ -68,10 +72,12 @@ export interface RigPose {
   aim: number;
   /** 0..1 blaster charge (telegraphs an incoming shot). */
   charge: number;
+  /** 0..1 frozen tint from the freeze module. */
+  chill: number;
 }
 
 export function createPose(): RigPose {
-  return { speed: 0, attack: 0, swing: 0, spawn: 1, stagger: 0, aim: 0, charge: 0 };
+  return { speed: 0, attack: 0, swing: 0, spawn: 1, stagger: 0, aim: 0, charge: 0, chill: 0 };
 }
 
 /** Animated voxel humanoid assembled from instanced cubes; reconfigured per spawn from an EnemyLook. */
@@ -105,9 +111,15 @@ export class EnemyRig {
   private gunBarrel: Part;
   private gunTip: InstancedMesh;
   private hasGun = false;
+  private crown: InstancedMesh[] = [];
+  private tinted = false;
   private armorDetails: Part[] = [];
 
   /** Current dimensions (world metres, scale applied) for hitboxes. */
+  coreCenterY = 0.9;
+  coreHalf = 0.1;
+  /** Forward offset of the core from the body centre. */
+  coreForward = 0.2;
   headCenterY = 1.4;
   headHalf = 0.21;
   bodyTop = 1.2;
@@ -178,6 +190,7 @@ export class EnemyRig {
     this.eyeLc = glow(renderer.eyeCyan, 'eyeLc', this.neck);
     this.eyeRc = glow(renderer.eyeCyan, 'eyeRc', this.neck);
     this.gunTip = glow(renderer.eyeCyan, 'gunTip', this.shoulderR);
+    for (let k = 0; k < 5; k++) this.crown.push(glow(renderer.gold, `crown${k}`, this.neck));
     this.root.setEnabled(false);
   }
 
@@ -248,14 +261,26 @@ export class EnemyRig {
     ];
     details.forEach((d, i) => set(this.armorDetails[i]!, d[0]!, d[1]!, d[2]!, d[3]!, d[4]!, d[5]!,
       i === 4 || i === 5 ? look.body : steel));
+    const cs = look.coreSize;
     for (const [c, on] of [
       [this.core, !cyan],
       [this.coreC, cyan],
     ] as const) {
       c.position.set(0, bh * 0.56, 0.225);
-      c.scaling.set(bw * 0.23, bh * 0.15, 0.025);
+      c.scaling.set(bw * 0.23 * cs, bh * 0.15 * cs, 0.025 + (cs - 1) * 0.02);
       c.setEnabled(on);
     }
+    // Elite / boss crown: a gold band of points above the head.
+    this.crown.forEach((m, k) => {
+      if (k < 4) {
+        m.position.set((k - 1.5) * hs * 0.28, hs + 0.11, hs * 0.2);
+        m.scaling.set(0.06, k % 3 === 0 ? 0.16 : 0.22, 0.06);
+      } else {
+        m.position.set(0, hs + 0.02, 0);
+        m.scaling.set(hs * 1.05, 0.05, hs * 1.05);
+      }
+      m.setEnabled(look.elite);
+    });
 
     // Arm-mounted blaster: hangs along the forearm, points forward when the arm is raised.
     this.hasGun = look.gun;
@@ -272,6 +297,10 @@ export class EnemyRig {
     this.headHalf = (hs / 2) * s;
     this.headCenterY = (legLen + bh + hs / 2) * s;
     this.bodyHalfWidth = (Math.max(bw, 0.36) / 2 + 0.06) * s;
+    this.coreCenterY = (legLen + bh * 0.56) * s;
+    this.coreHalf = Math.max(0.09, bw * 0.12 * cs) * s;
+    this.coreForward = 0.2 * s;
+    this.tinted = false;
     this.flash = 0;
     this.walkPhase = Math.random() * Math.PI * 2;
   }
@@ -307,10 +336,18 @@ export class EnemyRig {
       this.gunTip.scaling.set(0.06 * k, 0.02 + pose.charge * 0.06, 0.06 * k);
     }
 
-    if (this.flash > 0) {
-      this.flash -= dt;
-      const t = Math.max(0, this.flash / 0.09);
-      for (const p of this.parts) p.color.set(p.base.r + (1 - p.base.r) * t, p.base.g + (1 - p.base.g) * t, p.base.b + (1 - p.base.b) * t, 1);
+    if (this.flash > 0 || pose.chill > 0 || this.tinted) {
+      this.flash = Math.max(0, this.flash - dt);
+      const t = this.flash / 0.09;
+      // Frozen enemies tint icy blue; hit flashes go to white on top.
+      const c = pose.chill * 0.55;
+      for (const p of this.parts) {
+        const r = p.base.r + (0.7 - p.base.r) * c;
+        const g = p.base.g + (0.9 - p.base.g) * c;
+        const b = p.base.b + (1 - p.base.b) * c;
+        p.color.set(r + (1 - r) * t, g + (1 - g) * t, b + (1 - b) * t, 1);
+      }
+      this.tinted = t > 0 || c > 0;
     }
   }
 

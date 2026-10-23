@@ -5,24 +5,30 @@ import { createPixelLogo } from './PixelLogo';
 
 export class MainMenu {
   readonly root: HTMLElement;
-  onPlay: ((seedText: string) => void) | null = null;
+  onPlay: (() => void) | null = null;
   onSettings: (() => void) | null = null;
   onHowToPlay: (() => void) | null = null;
+  onUpgrades: (() => void) | null = null;
+  onAchievements: (() => void) | null = null;
+  onSkins: (() => void) | null = null;
   private records: HTMLElement;
-  private seedInput: HTMLInputElement;
   private arenaName: HTMLElement;
+  private scrapEl: HTMLElement;
 
   constructor(parent: HTMLElement, isTouch: boolean) {
-    this.seedInput = h('input', { class: 'seed-input', type: 'text', maxlength: 12, placeholder: 'Random', spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Arena seed' });
     const play = h('button', { class: 'btn btn-primary btn-xl' }, 'PLAY');
-    play.addEventListener('click', () => this.onPlay?.(this.seedInput.value));
-    this.seedInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this.onPlay?.(this.seedInput.value);
-    });
-    const howTo = h('button', { class: 'btn' }, 'HOW TO PLAY');
-    howTo.addEventListener('click', () => this.onHowToPlay?.());
-    const settings = h('button', { class: 'btn' }, 'SETTINGS');
-    settings.addEventListener('click', () => this.onSettings?.());
+    play.addEventListener('click', () => this.onPlay?.());
+    const btn = (label: string, fn: () => void) => {
+      const b = h('button', { class: 'btn' }, label);
+      b.addEventListener('click', fn);
+      return b;
+    };
+    const upgrades = btn('UPGRADES', () => this.onUpgrades?.());
+    const achievements = btn('ACHIEVEMENTS', () => this.onAchievements?.());
+    const skins = btn('WEAPON SKINS', () => this.onSkins?.());
+    const howTo = btn('HOW TO PLAY', () => this.onHowToPlay?.());
+    const settings = btn('SETTINGS', () => this.onSettings?.());
+    this.scrapEl = h('span', { class: 'menu-scrap' });
     const gear = h('button', { class: 'icon-btn menu-gear', 'aria-label': 'Settings', html: ICONS.gear });
     gear.addEventListener('click', () => this.onSettings?.());
 
@@ -45,9 +51,9 @@ export class MainMenu {
         gear,
         createPixelLogo('large'),
         h('p', { class: 'tagline' }, 'Every arena is different. Every run is a new challenge.'),
-        h('div', { class: 'menu-buttons' }, play, howTo, settings),
-        h('label', { class: 'seed-row' }, h('span', null, 'Arena seed'), this.seedInput),
-        isTouch ? h('div', { class: 'notice' }, 'Touch controls arrive in an upcoming update — use a keyboard & mouse for now.') : null,
+        h('div', { class: 'menu-buttons' }, play, upgrades, achievements, skins, h('div', { class: 'menu-buttons-row' }, howTo, settings)),
+        h('div', { class: 'loadout-scrap' }, h('span', { class: 'stat-icon coin', html: ICONS.coin }), this.scrapEl),
+        isTouch ? h('div', { class: 'notice touch-notice' }, 'Touch controls: left thumb moves, drag right side to aim, FIRE also aims while held.') : null,
         h(
           'div',
           { class: 'controls-hint' },
@@ -59,6 +65,8 @@ export class MainMenu {
             ['SPACE', 'jump'],
             ['SHIFT', 'sprint'],
             ['Q', 'dash'],
+            ['G', 'grenade'],
+            ['F', 'take'],
           ].flatMap(([k, v]) => [h('b', null, k!), ` ${v}  `]),
         ),
       ),
@@ -77,7 +85,8 @@ export class MainMenu {
     parent.append(this.root);
   }
 
-  show(records: PlayerRecords): void {
+  show(records: PlayerRecords, scrap = 0): void {
+    setText(this.scrapEl, `${scrap} Scrap`);
     this.records.replaceChildren(
       ...[
         ['Best wave', records.bestWave ? String(records.bestWave) : '—'],
@@ -85,7 +94,7 @@ export class MainMenu {
         ['Total kills', String(records.totalKills)],
         ['Headshots', String(records.totalHeadshots)],
         ['Longest run', records.longestRunSec ? formatTime(records.longestRunSec) : '—'],
-        ['Runs played', String(records.runsPlayed)],
+        ['Victories', String(records.victories)],
       ].map(([k, v]) => h('div', { class: 'record' }, h('span', null, k!), h('b', null, v!))),
     );
     this.root.classList.remove('hidden');
@@ -93,10 +102,6 @@ export class MainMenu {
 
   hide(): void {
     this.root.classList.add('hidden');
-  }
-
-  setSeed(text: string): void {
-    this.seedInput.value = text.slice(0, 12).toUpperCase();
   }
 
   setBackdropArena(name: string): void {

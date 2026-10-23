@@ -183,6 +183,11 @@ class TracerPool {
     scene: Scene,
     readonly capacity: number,
     material: Mesh['material'],
+    /** Seconds each streak lives. */
+    private lifetime = 0.075,
+    /** Static streaks don't travel; they just thin out (lightning). */
+    private travel = true,
+    private width = 0.035,
   ) {
     const b = new VoxelMeshBuilder();
     b.addBox(0, 0, 0, 1, 1, 1, { r: 1, g: 1, b: 1 }, { faceShade: false });
@@ -211,7 +216,7 @@ class TracerPool {
     this.ex[i] = ex;
     this.ey[i] = ey;
     this.ez[i] = ez;
-    this.life[i] = 0.075;
+    this.life[i] = this.lifetime;
     this.active = this.capacity;
   }
 
@@ -224,14 +229,14 @@ class TracerPool {
         continue;
       }
       this.life[i]! -= dt;
-      const t = Math.max(0, this.life[i]! / 0.075);
+      const t = Math.max(0, this.life[i]! / this.lifetime);
       if (t <= 0) {
         this.matrices.fill(0, i * 16, i * 16 + 16);
         continue;
       }
       active++;
       // The streak travels toward the target and shrinks, reading as a fast bullet.
-      const k = 1 - t;
+      const k = this.travel ? 1 - t : 0;
       const ax = this.sx[i]! + (this.ex[i]! - this.sx[i]!) * k * 0.6;
       const ay = this.sy[i]! + (this.ey[i]! - this.sy[i]!) * k * 0.6;
       const az = this.sz[i]! + (this.ez[i]! - this.sz[i]!) * k * 0.6;
@@ -240,7 +245,7 @@ class TracerPool {
       const dz = this.ez[i]! - az;
       const len = Math.hypot(dx, dy, dz);
       if (len < 0.01) continue;
-      const w = 0.035 * (0.4 + t * 0.6);
+      const w = this.width * (0.4 + t * 0.6);
       tmpScale.set(w, w, len);
       Quaternion.RotationYawPitchRollToRef(Math.atan2(dx, dz), -Math.asin(dy / len), 0, tmpQuat);
       tmpPos.set(ax + dx * 0.5, ay + dy * 0.5, az + dz * 0.5);
@@ -264,6 +269,7 @@ export class Effects {
   private debris: CubeParticlePool;
   private sparks: CubeParticlePool;
   private tracers: TracerPool;
+  private bolts: TracerPool;
   private world: VoxelWorld | null = null;
   /** Particle density multiplier from quality settings. */
   density = 1;
@@ -272,6 +278,7 @@ export class Effects {
     this.debris = new CubeParticlePool(scene, 'debris', 360, materials.vertexLit('debris'), true, 18, true);
     this.sparks = new CubeParticlePool(scene, 'sparks', 160, materials.emissive('#ffd27a', 1.4), false, 9, false);
     this.tracers = new TracerPool(scene, 32, materials.emissive('#ffe6a0', 1.6));
+    this.bolts = new TracerPool(scene, 48, materials.emissive('#7fe9ff', 1.8), 0.14, false, 0.05);
   }
 
   setWorld(world: VoxelWorld | null): void {
@@ -318,6 +325,25 @@ export class Effects {
     }
   }
 
+  /** Jagged chain-lightning arc built from three segments with random kinks. */
+  lightning(sx: number, sy: number, sz: number, ex: number, ey: number, ez: number): void {
+    let px = sx;
+    let py = sy;
+    let pz = sz;
+    for (let k = 1; k <= 3; k++) {
+      const t = k / 3;
+      const jitter = k < 3 ? 0.35 : 0;
+      const nx = sx + (ex - sx) * t + (Math.random() - 0.5) * jitter;
+      const ny = sy + (ey - sy) * t + (Math.random() - 0.5) * jitter;
+      const nz = sz + (ez - sz) * t + (Math.random() - 0.5) * jitter;
+      this.bolts.emit(px, py, pz, nx, ny, nz);
+      px = nx;
+      py = ny;
+      pz = nz;
+    }
+    this.sparkBurst(ex, ey, ez, 0, 1, 0, 4, 3);
+  }
+
   tracer(sx: number, sy: number, sz: number, ex: number, ey: number, ez: number): void {
     this.tracers.emit(sx, sy, sz, ex, ey, ez);
   }
@@ -326,11 +352,13 @@ export class Effects {
     this.debris.update(dt, this.world);
     this.sparks.update(dt, this.world);
     this.tracers.update(dt);
+    this.bolts.update(dt);
   }
 
   clear(): void {
     this.debris.clear();
     this.sparks.clear();
     this.tracers.clear();
+    this.bolts.clear();
   }
 }

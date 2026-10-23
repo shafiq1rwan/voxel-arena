@@ -25,6 +25,14 @@ import shieldPlus from '@phosphor-icons/core/fill/shield-plus-fill.svg?raw';
 import heartbeat from '@phosphor-icons/core/fill/heartbeat-fill.svg?raw';
 import heartBreak from '@phosphor-icons/core/fill/heart-break-fill.svg?raw';
 import bomb from '@phosphor-icons/core/fill/bomb-fill.svg?raw';
+import lock from '@phosphor-icons/core/fill/lock-fill.svg?raw';
+import trophy from '@phosphor-icons/core/fill/trophy-fill.svg?raw';
+import paintBrush from '@phosphor-icons/core/fill/paint-brush-fill.svg?raw';
+import storefront from '@phosphor-icons/core/fill/storefront-fill.svg?raw';
+import packageIcon from '@phosphor-icons/core/fill/package-fill.svg?raw';
+import deviceRotate from '@phosphor-icons/core/fill/device-rotate-fill.svg?raw';
+import arrowsLeftRight from '@phosphor-icons/core/fill/arrows-left-right-fill.svg?raw';
+import crosshairSimple from '@phosphor-icons/core/fill/crosshair-simple-fill.svg?raw';
 import type { UpgradeId } from '../upgrades/UpgradeTypes';
 
 /** Marks icons as decorative; accessible names come from the surrounding button/label. */
@@ -41,6 +49,16 @@ export const ICONS = {
   arena: prep(castleTurret),
   waves: prep(sword),
   upgrades: prep(arrowFatLinesUp),
+  lock: prep(lock),
+  trophy: prep(trophy),
+  brush: prep(paintBrush),
+  shop: prep(storefront),
+  crate: prep(packageIcon),
+  rotate: prep(deviceRotate),
+  swap: prep(arrowsLeftRight),
+  aim: prep(crosshairSimple),
+  grenade: prep(bomb),
+  dash: prep(caretDoubleRight),
 };
 
 const UPGRADE_ICONS: Record<UpgradeId, string> = {

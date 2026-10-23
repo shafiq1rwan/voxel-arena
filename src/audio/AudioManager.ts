@@ -26,7 +26,13 @@ export type SfxName =
   | 'explosion'
   | 'dash'
   | 'upgrade'
-  | 'lastStand';
+  | 'lastStand'
+  | 'zap'
+  | 'slam'
+  | 'roar'
+  | 'achievement'
+  | 'crate'
+  | 'throw';
 
 export class AudioManager {
   private ctx: AudioContext | null = null;
@@ -176,6 +182,31 @@ export class AudioManager {
         this.tone(now, 'triangle', 587, 587, 0.09, 0.18);
         this.tone(now + 0.08, 'triangle', 880, 880, 0.09, 0.18);
         this.tone(now + 0.16, 'triangle', 1175, 1175, 0.22, 0.18);
+        break;
+      case 'zap':
+        this.noise(now, 0.12, 4200, 'highpass', 0.25, 1);
+        this.tone(now, 'square', 1400, 300, 0.12, 0.08);
+        break;
+      case 'slam':
+        this.noise(now, 0.5, 300, 'lowpass', 0.8, 0.7);
+        this.tone(now, 'sine', 80, 30, 0.45, 0.6);
+        break;
+      case 'roar':
+        this.tone(now, 'sawtooth', 70, 50, 1.1, 0.35 * intensity);
+        this.tone(now, 'square', 105, 72, 1.1, 0.12 * intensity);
+        this.noise(now, 0.9, 500, 'bandpass', 0.25 * intensity, 0.8);
+        break;
+      case 'achievement':
+        this.tone(now, 'triangle', 784, 784, 0.1, 0.18);
+        this.tone(now + 0.1, 'triangle', 988, 988, 0.1, 0.18);
+        this.tone(now + 0.2, 'triangle', 1319, 1319, 0.35, 0.2);
+        break;
+      case 'crate':
+        this.tone(now, 'square', 330, 660, 0.12, 0.12);
+        this.noise(now, 0.08, 2000, 'bandpass', 0.15);
+        break;
+      case 'throw':
+        this.noise(now, 0.14, 900, 'bandpass', 0.25, 1.2);
         break;
       case 'lastStand':
         this.tone(now, 'sawtooth', 160, 320, 0.5, 0.25);

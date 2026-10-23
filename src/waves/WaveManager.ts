@@ -3,9 +3,8 @@ import type { EventBus, GameEvents } from '../core/EventBus';
 import { SeededRandom } from '../core/SeededRandom';
 import type { EnemyPool } from '../enemies/EnemyPool';
 import type { EnemySpawner } from '../enemies/EnemySpawner';
-import type { ArchetypeId } from '../enemies/EnemyTypes';
 import type { PlayerController } from '../player/PlayerController';
-import { activeEnemyCap, composeWave, waveDef } from './ThreatBudget';
+import { activeEnemyCap, composeWave, waveDef, type SpawnEntry } from './ThreatBudget';
 
 export enum WavePhase {
   Prepare = 'PREPARE',
@@ -32,9 +31,14 @@ export class WaveManager {
   onRewardPhase: ((wave: number) => void) | null = null;
 
   /** Spawn queue, stored reversed so pop() yields the next enemy in order. */
-  private queue: ArchetypeId[] = [];
+  private queue: SpawnEntry[] = [];
   /** Composition counts for the HUD / analytics. */
   shootersThisWave = 0;
+  elitesThisWave = 0;
+  tanksThisWave = 0;
+  bossWave = false;
+  /** Swarm challenge: multiplies each wave's threat budget. */
+  budgetScale = 1;
   private spawnTimer = 0;
   private rng = new SeededRandom(1);
   private unsubscribe: (() => void) | null = null;
@@ -45,8 +49,9 @@ export class WaveManager {
     private bus: EventBus<GameEvents>,
   ) {}
 
-  start(runSeed: number): void {
+  start(runSeed: number, budgetScale = 1): void {
     this.rng = new SeededRandom(runSeed).fork('waves');
+    this.budgetScale = budgetScale;
     this.wave = 0;
     this.unsubscribe?.();
     this.unsubscribe = this.bus.on('enemy:killed', () => {
@@ -67,14 +72,18 @@ export class WaveManager {
   }
 
   get remaining(): number {
-    return this.totalThisWave - this.killedThisWave;
+    // Boss summons are killed too but aren't part of the wave total.
+    return Math.max(0, this.totalThisWave - this.killedThisWave);
   }
 
   private beginPrepare(): void {
     this.wave++;
-    this.queue = composeWave(this.wave, this.rng).reverse();
+    this.queue = composeWave(this.wave, this.rng, this.budgetScale).reverse();
     this.totalThisWave = this.queue.length;
-    this.shootersThisWave = this.queue.filter((id) => id === 'shooter').length;
+    this.shootersThisWave = this.queue.filter((e) => e.id === 'shooter').length;
+    this.tanksThisWave = this.queue.filter((e) => e.id === 'tank').length;
+    this.elitesThisWave = this.queue.filter((e) => e.elite).length;
+    this.bossWave = this.queue.some((e) => e.id === 'boss');
     this.killedThisWave = 0;
     this.waveTime = 0;
     this.phase = WavePhase.Prepare;
@@ -138,11 +147,12 @@ export class WaveManager {
     const mods = {
       healthScale: 1 + 0.05 * (this.wave - 1),
       speedScale: Math.min(1.25, 1 + 0.025 * (this.wave - 1)),
+      bossTier: Math.floor(this.wave / 10) - 1,
     };
     for (let i = 0; i < batch; i++) {
-      const id = this.queue.pop()!;
-      if (!this.spawner.spawn(id, player.body.x, player.body.z, player.eyeY, mods)) {
-        this.queue.push(id);
+      const entry = this.queue.pop()!;
+      if (!this.spawner.spawn(entry.id, player.body.x, player.body.z, player.eyeY, mods, entry.elite)) {
+        this.queue.push(entry);
         break;
       }
     }

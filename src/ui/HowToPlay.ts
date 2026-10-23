@@ -10,8 +10,19 @@ const CONTROLS: [string, string][] = [
   ['Space', 'Jump'],
   ['Shift', 'Sprint'],
   ['Q', 'Dash (once unlocked)'],
-  ['1 / 2 / 3', 'Pick an upgrade card'],
+  ['G', 'Grenade (unlock)'],
+  ['F', 'Take weapon from crate'],
+  ['1-3 / Wheel', 'Switch weapon · pick upgrade'],
   ['Esc / P', 'Pause'],
+];
+
+const TOUCH_CONTROLS: [string, string][] = [
+  ['Left thumb', 'Move (push fully forward to sprint)'],
+  ['Right side drag', 'Look / aim'],
+  ['FIRE', 'Shoot — drag while holding to aim'],
+  ['AIM · JUMP · R', 'Aim down sights · jump · reload'],
+  ['DASH · NADE · SWAP', 'Abilities and weapon switch'],
+  ['TAKE', 'Appears next to a weapon crate'],
 ];
 
 /** Shared "How to play" dialog, opened from the main menu and the pause menu. */
@@ -19,8 +30,9 @@ export class HowToPlay {
   readonly root: HTMLElement;
   onClose: (() => void) | null = null;
 
-  constructor(parent: HTMLElement) {
+  constructor(parent: HTMLElement, isTouch = false) {
     const close = h('button', { class: 'btn btn-primary' }, 'GOT IT');
+    const controls = isTouch ? TOUCH_CONTROLS : CONTROLS;
     close.addEventListener('click', () => this.onClose?.());
 
     const enemy = (cls: string, name: string, text: string) =>
@@ -42,7 +54,7 @@ export class HowToPlay {
             'section',
             { class: 'htp-section' },
             h('h3', null, 'Controls'),
-            h('div', { class: 'controls-list' }, ...CONTROLS.map(([k, v]) => h('div', { class: 'control-row' }, h('kbd', null, k), h('span', null, v)))),
+            h('div', { class: 'controls-list' }, ...controls.map(([k, v]) => h('div', { class: 'control-row' }, h('kbd', null, k), h('span', null, v)))),
           ),
           h(
             'section',
@@ -50,6 +62,8 @@ export class HowToPlay {
             h('h3', null, 'Enemies'),
             enemy('chaser', 'Chaser', 'Rushes in and swings. Keep moving and go for the head.'),
             enemy('shooter', 'Shooter', 'Keeps its distance and fires slow bolts after a glowing wind-up. Sidestep, or headshot it to interrupt.'),
+            enemy('tank', 'Tank', 'Armoured head. Shoot the glowing chest core and stay out of the red slam ring.'),
+            enemy('elite', 'Elites & the boss', 'Gold-crowned elites have an extra ability and drop weapon crates. Wave 10: the Obsidian Colossus.'),
             h('h3', null, 'Between waves'),
             h(
               'div',
@@ -58,7 +72,8 @@ export class HowToPlay {
               h('span', null, 'Choose 1 of 3 upgrades. Builds stack — try Explosive Kills with Rapid Fire.'),
             ),
             h('div', { class: 'htp-row' }, h('i', { class: 'htp-icon', html: upgradeIcon('dashCharge') }), h('span', null, 'Dash Charge unlocks a quick dash on Q with a moment of invulnerability.')),
-            h('div', { class: 'htp-row' }, h('i', { class: 'htp-icon heart', html: ICONS.heart }), h('span', null, 'Health and ammo crates drop from enemies and appear after each wave.')),
+            h('div', { class: 'htp-row' }, h('i', { class: 'htp-icon', html: ICONS.crate }), h('span', null, 'Weapon crates hold procedural guns — modules add chain lightning, explosions or freeze.')),
+            h('div', { class: 'htp-row' }, h('i', { class: 'htp-icon heart', html: ICONS.heart }), h('span', null, 'Earn Scrap every run to unlock weapons, abilities, themes and challenges.')),
           ),
         ),
         h('div', { class: 'modal-actions' }, close),

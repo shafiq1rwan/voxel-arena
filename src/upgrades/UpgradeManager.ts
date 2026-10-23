@@ -46,12 +46,12 @@ export class UpgradeManager {
    * Offers up to `count` distinct eligible upgrades. Weighted by rarity; once a category has been
    * offered, the remaining cards of that category are down-weighted so offers stay varied.
    */
-  offer(rng: SeededRandom, count = 3): UpgradeDef[] {
+  offer(rng: SeededRandom, count = 3, weightBonus: (id: UpgradeId) => number = () => 1): UpgradeDef[] {
     const pool = Object.values(UPGRADES).filter((d) => this.isEligible(d));
     const offered: UpgradeDef[] = [];
     const categoryCount: Record<string, number> = {};
     while (offered.length < count && pool.length > 0) {
-      const pick = rng.weighted(pool, (d) => RARITY_WEIGHT[d.rarity] / (1 + 2 * (categoryCount[d.category] ?? 0)));
+      const pick = rng.weighted(pool, (d) => (RARITY_WEIGHT[d.rarity] * weightBonus(d.id)) / (1 + 2 * (categoryCount[d.category] ?? 0)));
       offered.push(pick);
       categoryCount[pick.category] = (categoryCount[pick.category] ?? 0) + 1;
       pool.splice(pool.indexOf(pick), 1);

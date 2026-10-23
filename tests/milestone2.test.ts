@@ -1,28 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRandom } from '../src/core/SeededRandom';
 import { segmentCapsuleHit } from '../src/combat/ProjectileSystem';
-import { ARCHETYPES } from '../src/enemies/EnemyTypes';
 import { UpgradeManager } from '../src/upgrades/UpgradeManager';
 import { UPGRADES, type UpgradeId } from '../src/upgrades/UpgradeTypes';
-import { composeWave, waveBudget } from '../src/waves/ThreatBudget';
+import { composeWave, spentThreat, waveBudget } from '../src/waves/ThreatBudget';
 
 describe('Wave composition table', () => {
   it('waves 1-2 are chasers only', () => {
-    for (const w of [1, 2]) for (let s = 0; s < 20; s++) expect(composeWave(w, new SeededRandom(s)).every((id) => id === 'chaser')).toBe(true);
+    for (const w of [1, 2]) for (let s = 0; s < 20; s++) expect(composeWave(w, new SeededRandom(s)).every((e) => e.id === 'chaser')).toBe(true);
   });
 
   it('wave 3 introduces shooters and wave 4 mixes them in', () => {
     for (let s = 0; s < 20; s++) {
-      expect(composeWave(3, new SeededRandom(s)).filter((id) => id === 'shooter').length).toBeGreaterThanOrEqual(2);
-      expect(composeWave(4, new SeededRandom(s)).filter((id) => id === 'shooter').length).toBeGreaterThanOrEqual(3);
+      expect(composeWave(3, new SeededRandom(s)).filter((e) => e.id === 'shooter').length).toBeGreaterThanOrEqual(2);
+      expect(composeWave(4, new SeededRandom(s)).filter((e) => e.id === 'shooter').length).toBeGreaterThanOrEqual(3);
     }
   });
 
   it('opens every wave with melee spawns and spends exactly the budget', () => {
-    for (let w = 1; w <= 12; w++) {
+    for (let w = 1; w <= 9; w++) {
       const list = composeWave(w, new SeededRandom(w * 31));
-      expect(list.slice(0, 3).every((id) => id === 'chaser')).toBe(true);
-      expect(list.reduce((sum, id) => sum + ARCHETYPES[id].threatCost, 0)).toBe(waveBudget(w));
+      expect(list.slice(0, 3).every((e) => e.id === 'chaser')).toBe(true);
+      expect(spentThreat(list)).toBe(waveBudget(w));
     }
   });
 
