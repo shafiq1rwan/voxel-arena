@@ -43,6 +43,7 @@ export class SettingsPanel {
       h(
         'div',
         { class: 'panel modal-card' },
+        h('span', { class: 'panel-tag' }, 'SETTINGS'),
         h('h2', { class: 'modal-title' }, 'SETTINGS'),
         h('div', { class: 'settings-group' }, h('h3', null, 'Controls'), slider('mouseSensitivity', 'Mouse sensitivity', 0.2, 3, 0.05, (v) => v.toFixed(2)), toggle('invertY', 'Invert Y axis')),
         h(
@@ -54,6 +55,7 @@ export class SettingsPanel {
           toggle('showFps', 'Show FPS'),
         ),
         h('div', { class: 'settings-group' }, h('h3', null, 'Audio'), slider('volume', 'Master volume', 0, 1, 0.05, (v) => `${Math.round(v * 100)}%`)),
+        h('p', { class: 'settings-note' }, 'Changes apply immediately and are saved on this device.'),
         h('div', { class: 'modal-actions' }, close),
       ),
     );

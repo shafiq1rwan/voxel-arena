@@ -5,12 +5,12 @@ import {
   cellIndex,
   type ArenaData,
   type ArenaOptions,
-  type DecorBox,
   type GridPoint,
   type SymmetryMode,
   type ThemeId,
 } from './ArenaTypes';
 import { computeReachable, fillUnreachablePockets, validateArena } from './ArenaValidator';
+import { fortressDecor } from './FortressDecor';
 
 /**
  * Seeded arena generator.
@@ -361,121 +361,6 @@ function chooseSpawnsAndPickups(data: ArenaData, opts: ArenaOptions, rng: Seeded
   data.pickupPoints = spreadPick(pickupCandidates, 6, rng);
 }
 
-function buildDecorations(data: ArenaData, rng: SeededRandom): void {
-  const n = data.size;
-  const deco: DecorBox[] = [];
-  const theme = data.themeId;
-
-  // Inner faces of the boundary wall: glowing windows / strips.
-  const faces: { x: number; z: number; nx: number; nz: number }[] = [];
-  for (let k = 2; k < n - 2; k++) {
-    faces.push({ x: 1, z: k + 0.5, nx: 1, nz: 0 });
-    faces.push({ x: n - 1, z: k + 0.5, nx: -1, nz: 0 });
-    faces.push({ x: k + 0.5, z: 1, nx: 0, nz: 1 });
-    faces.push({ x: k + 0.5, z: n - 1, nx: 0, nz: -1 });
-  }
-  const t = 0.06;
-  const flush = (f: (typeof faces)[number], y: number, along: number, height: number, depth: number, slot: DecorBox['slot']) => {
-    const alongX = f.nx === 0;
-    deco.push({
-      x: f.x + f.nx * depth * 0.5,
-      y,
-      z: f.z + f.nz * depth * 0.5,
-      sx: alongX ? along : depth,
-      sy: height,
-      sz: alongX ? depth : along,
-      slot,
-    });
-  };
-
-  for (const f of faces) {
-    const k = Math.floor(f.nx === 0 ? f.x : f.z);
-    if (theme === 'neon') {
-      flush(f, 1.25, 1.001, 0.12, t, 'glow2');
-      flush(f, 4.2, 1.001, 0.1, t, 'glow');
-      if (k % 6 === 0) flush(f, 2.6, 0.18, 2.4, t, 'glow');
-    } else if (theme === 'industrial') {
-      flush(f, 3.9, 1.001, 0.32, 0.36, 'trim'); // pipe run
-      if (k % 2 === 0) flush(f, 0.18, 1.001, 0.36, t, 'accent'); // hazard stripe
-      if (k % 7 === 3) flush(f, 2.8, 0.7, 0.45, t, 'glow');
-    } else if (theme === 'frozen') {
-      if (k % 5 === 2) flush(f, 2.9, 0.6, 0.9, t, 'glow');
-      if (rng.chance(0.25)) flush(f, 4.8, 0.3, rng.range(0.4, 1), 0.3, 'glow2');
-    } else {
-      if (k % 5 === 2) flush(f, 2.9, 0.5, 0.8, t, 'glow'); // lit window
-      if (k % 9 === 6) flush(f, 2.4, 0.8, 1.8, t, 'accent'); // banner
-      if (k % 9 === 6) flush(f, 3.5, 0.18, 0.3, 0.25, 'glow2'); // torch
-    }
-  }
-
-  // Lit windows on tall interior walls (flush, so they never interfere with collision).
-  for (let z = 1; z < n - 1; z++) {
-    for (let x = 1; x < n - 1; x++) {
-      const i = cellIndex(n, x, z);
-      const h = data.heights[i]!;
-      if (h < 3 || data.kinds[i] === CellKind.Boundary) continue;
-      if (!rng.chance(0.18)) continue;
-      const sides: [number, number][] = [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ];
-      for (const [dx, dz] of sides) {
-        if (data.heights[cellIndex(n, x + dx, z + dz)]! > 0.5) continue;
-        const fx = dx === 0 ? x + 0.5 : dx > 0 ? x + 1 : x;
-        const fz = dz === 0 ? z + 0.5 : dz > 0 ? z + 1 : z;
-        const alongX = dx === 0;
-        deco.push({
-          x: fx + dx * t * 0.5,
-          y: h - 0.8,
-          z: fz + dz * t * 0.5,
-          sx: alongX ? 0.45 : t,
-          sy: 0.6,
-          sz: alongX ? t : 0.45,
-          slot: theme === 'neon' && rng.chance(0.5) ? 'glow2' : 'glow',
-        });
-        break;
-      }
-    }
-  }
-
-  // Backdrop skyline outside the walls (unreachable, purely atmospheric).
-  const c = n / 2;
-  const towers = 26;
-  for (let k = 0; k < towers; k++) {
-    const ang = (k / towers) * Math.PI * 2 + rng.range(-0.08, 0.08);
-    const dist = c + rng.range(4, 22);
-    const w = rng.range(3, 7);
-    const d = rng.range(3, 7);
-    const h = rng.range(6, theme === 'neon' ? 26 : 18);
-    const x = c + Math.cos(ang) * dist;
-    const z = c + Math.sin(ang) * dist;
-    deco.push({ x, y: h / 2 - 2, z, sx: w, sy: h + 4, sz: d, slot: rng.chance(0.5) ? 'backdrop' : 'backdropDark' });
-    // Spire / battlement cap.
-    if (rng.chance(0.6)) deco.push({ x, y: h + 0.6, z, sx: w * 0.5, sy: 1.2 + rng.range(0, 3), sz: d * 0.5, slot: 'backdropDark' });
-    // Windows facing the arena centre.
-    const fx = -Math.cos(ang);
-    const fz = -Math.sin(ang);
-    const faceX = Math.abs(fx) > Math.abs(fz);
-    const rows = Math.floor(h / 2.2);
-    for (let r = 1; r < rows; r++) {
-      if (!rng.chance(0.45)) continue;
-      const off = rng.range(-0.3, 0.3);
-      deco.push({
-        x: x + (faceX ? Math.sign(fx) * (w / 2 + 0.03) : off * w),
-        y: r * 2.2,
-        z: z + (faceX ? off * d : Math.sign(fz) * (d / 2 + 0.03)),
-        sx: faceX ? 0.06 : 0.7,
-        sy: 0.9,
-        sz: faceX ? 0.7 : 0.06,
-        slot: theme === 'neon' && rng.chance(0.5) ? 'glow2' : 'glow',
-      });
-    }
-  }
-  data.decorations = deco;
-}
-
 function generateOnce(seed: number, attempt: number, opts: ArenaOptions): ArenaData {
   const rng = new SeededRandom((seed + Math.imul(attempt, 0x9e3779b1)) >>> 0);
   const layoutRng = rng.fork('layout');
@@ -507,7 +392,7 @@ function generateOnce(seed: number, attempt: number, opts: ArenaOptions): ArenaD
 
   fillUnreachablePockets(data, computeReachable(data, data.playerStart));
   chooseSpawnsAndPickups(data, opts, pointRng);
-  buildDecorations(data, decoRng);
+  data.decorations = fortressDecor(data, decoRng);
   return data;
 }
 

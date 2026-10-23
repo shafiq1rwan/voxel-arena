@@ -4,8 +4,6 @@ import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { PointLight } from '@babylonjs/core/Lights/pointLight';
-import { ShadowGenerator } from '@babylonjs/core/Lights/Shadows/shadowGenerator';
-import '@babylonjs/core/Lights/Shadows/shadowGeneratorSceneComponent';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
@@ -13,7 +11,7 @@ import '@babylonjs/core/Layers/effectLayerSceneComponent';
 import { CreateSphere } from '@babylonjs/core/Meshes/Builders/sphereBuilder';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { QUALITY_PRESETS, type QualityLevel } from '../config';
+import { QUALITY_PRESETS, SUN_DIRECTION, type QualityLevel } from '../config';
 import type { ThemePalette } from '../procedural/Themes';
 import { MaterialLibrary } from '../render/Materials';
 import type { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
@@ -37,9 +35,13 @@ export class SceneManager {
   private glow: GlowLayer | null = null;
   private sky: Mesh;
   private quality: QualityLevel = 'medium';
-  private shadows: ShadowGenerator | null = null;
-  private arenaMeshes: Mesh[] = [];
-  private lanternLights: PointLight[] = [];
+  /** Device pixel ratio the current quality preset targets. */
+  private targetDpr = 1;
+  /** Adaptive resolution multiplier (1 = full target resolution). */
+  renderScale = 1;
+  private frameAccum = 0;
+  private frameCount = 0;
+  private headroomWindows = 0;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.engine = new Engine(
@@ -76,20 +78,13 @@ export class SceneManager {
     this.camera.rotationQuaternion = null!;
 
     this.hemi = new HemisphericLight('hemi', new Vector3(0.2, 1, 0.1), scene);
-    this.sun = new DirectionalLight('sun', new Vector3(-0.45, -0.85, -0.3).normalize(), scene);
+    // Same direction the arena's baked shadows were computed with.
+    this.sun = new DirectionalLight('sun', new Vector3(SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z).normalize(), scene);
     this.muzzleLight = new PointLight('muzzle', Vector3.Zero(), scene);
     this.muzzleLight.diffuse = new Color3(1, 0.75, 0.35);
     this.muzzleLight.specular = Color3.Black();
     this.muzzleLight.range = 9;
     this.muzzleLight.intensity = 0;
-    for (let i = 0; i < 3; i++) {
-      const light = new PointLight(`lantern_${i}`, Vector3.Zero(), scene);
-      light.diffuse = new Color3(1, 0.39, 0.08);
-      light.specular = Color3.Black();
-      light.range = 12;
-      light.intensity = 0;
-      this.lanternLights.push(light);
-    }
 
     this.sky = this.createSky();
 
@@ -120,10 +115,6 @@ export class SceneManager {
     this.sun.diffuse = Color3.FromHexString(theme.sunColor);
     this.sun.specular = Color3.FromHexString(theme.sunColor).scale(0.3);
     this.sun.intensity = theme.sunIntensity;
-    this.lanternLights.forEach((light, i) => {
-      light.position.set([10.4, 31.6, 21][i]!, 3.1, [1.5, 40.5, 40.5][i]!);
-      light.intensity = theme.id === 'ruins' ? 1.5 : 0;
-    });
 
     // Vertical gradient baked into sky vertex colours.
     const positions = this.sky.getVerticesData(VertexBuffer.PositionKind)!;
@@ -143,8 +134,9 @@ export class SceneManager {
   setQuality(q: QualityLevel): void {
     this.quality = q;
     const preset = QUALITY_PRESETS[q];
-    const dpr = Math.min(window.devicePixelRatio || 1, preset.maxPixelRatio);
-    this.engine.setHardwareScalingLevel(1 / dpr);
+    this.targetDpr = Math.min(window.devicePixelRatio || 1, preset.maxPixelRatio);
+    this.renderScale = 1;
+    this.applyResolution();
     this.scene.fogEnd = preset.fogEnd;
     this.scene.fogStart = preset.fogEnd * 0.3;
     if (preset.glow && !this.glow) {
@@ -164,30 +156,42 @@ export class SceneManager {
       this.glow = null;
     }
     this.engine.resize();
-    this.updateShadows();
   }
 
-  setArenaMeshes(meshes: Mesh[]): void {
-    this.arenaMeshes = [...meshes];
-    this.updateShadows();
+  private applyResolution(): void {
+    this.engine.setHardwareScalingLevel(1 / (this.targetDpr * this.renderScale));
   }
 
-  private updateShadows(): void {
-    this.shadows?.dispose();
-    this.shadows = null;
-    if (this.quality === 'low' || !this.arenaMeshes.length) return;
-    this.sun.position.set(40, 55, 25);
-    this.sun.shadowMinZ = 1;
-    this.sun.shadowMaxZ = 130;
-    const shadows = new ShadowGenerator(this.quality === 'high' ? 2048 : 1024, this.sun);
-    shadows.usePercentageCloserFiltering = true;
-    shadows.bias = 0.001;
-    shadows.normalBias = 0.035;
-    shadows.setDarkness(0.28);
-    for (const mesh of this.arenaMeshes) if (mesh.name === 'arena_terrain') shadows.addShadowCaster(mesh);
-    const enemies = this.scene.getMeshByName('enemy_cube_src');
-    if (enemies) shadows.addShadowCaster(enemies);
-    this.shadows = shadows;
+  /**
+   * Adaptive resolution: averages frame time over ~1 s windows. Below ~50 fps it renders fewer
+   * pixels (down to 60% per axis); after 3 s of comfortable 60 fps it scales back up. This is the
+   * main lever on weak, fill-rate-bound GPUs (integrated laptop graphics, Chromebooks, phones).
+   */
+  updateAdaptiveResolution(frameMs: number): void {
+    // Ignore hitches from tab switches / loading spikes.
+    if (frameMs > 250) return;
+    this.frameAccum += frameMs;
+    this.frameCount++;
+    if (this.frameAccum < 1000) return;
+    const avg = this.frameAccum / this.frameCount;
+    this.frameAccum = 0;
+    this.frameCount = 0;
+    let next = this.renderScale;
+    if (avg > 20) {
+      next = Math.max(0.6, this.renderScale - (avg > 30 ? 0.15 : 0.08));
+      this.headroomWindows = 0;
+    } else if (avg < 15) {
+      if (++this.headroomWindows >= 3) {
+        next = Math.min(1, this.renderScale + 0.05);
+        this.headroomWindows = 0;
+      }
+    } else {
+      this.headroomWindows = 0;
+    }
+    if (Math.abs(next - this.renderScale) > 1e-3) {
+      this.renderScale = next;
+      this.applyResolution();
+    }
   }
 
   get qualityLevel(): QualityLevel {

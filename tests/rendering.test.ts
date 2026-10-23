@@ -6,7 +6,8 @@ import { generateArena } from '../src/procedural/ArenaGenerator';
 import { THEMES } from '../src/procedural/Themes';
 import { MaterialLibrary } from '../src/render/Materials';
 import { ArenaRenderer } from '../src/world/ArenaRenderer';
-import { fortressDecor } from '../src/world/FortressDecor';
+import { SeededRandom } from '../src/core/SeededRandom';
+import { fortressDecor } from '../src/procedural/FortressDecor';
 
 describe('Fortress rendering lifecycle', () => {
   it('keeps merged geometry valid and disposes old meshes across retries and biome changes', () => {
@@ -29,7 +30,9 @@ describe('Fortress rendering lifecycle', () => {
         }
         // Art decoration must never mutate the movement / hitscan / AI heightmap.
         expect(arena.heights).toEqual(heights);
-        if (themeId === 'ruins') expect(fortressDecor(arena)).toEqual(fortressDecor(arena));
+        // Every theme gets fortress dressing, deterministically.
+        expect(arena.decorations.length).toBeGreaterThan(200);
+        expect(fortressDecor(arena, new SeededRandom(5))).toEqual(fortressDecor(arena, new SeededRandom(5)));
       }
       renderer.dispose();
       expect(scene.meshes).toHaveLength(0);

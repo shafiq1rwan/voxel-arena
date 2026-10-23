@@ -48,6 +48,14 @@ export function scaleRgb(c: RGB, s: number): RGB {
 }
 
 /**
+ * Optional per-vertex light baking. Receives a sample point (nudged slightly inside the face and
+ * off the surface) plus the face normal, and writes an RGB multiplier into `out`.
+ */
+export type VertexLighter = (px: number, py: number, pz: number, nx: number, ny: number, nz: number, out: RGB) => void;
+
+const lightTmp: RGB = { r: 1, g: 1, b: 1 };
+
+/**
  * Accumulates coloured quads/boxes into a single mesh. All voxel geometry (arena, weapons,
  * pickups) is merged through this so each material costs one draw call.
  */
@@ -56,6 +64,8 @@ export class VoxelMeshBuilder {
   private normals: number[] = [];
   private colors: number[] = [];
   private indices: number[] = [];
+  /** When set, every vertex colour is multiplied by the baked light at that vertex. */
+  lighter: VertexLighter | null = null;
 
   get vertexCount(): number {
     return this.positions.length / 3;
@@ -77,10 +87,19 @@ export class VoxelMeshBuilder {
     for (let k = 0; k < 4; k++) {
       const su = signs[k]![0]! * hu;
       const sv = signs[k]![1]! * hv;
-      this.positions.push(cx + u[0]! * su + v[0]! * sv, cy + u[1]! * su + v[1]! * sv, cz + u[2]! * su + v[2]! * sv);
+      const px = cx + u[0]! * su + v[0]! * sv;
+      const py = cy + u[1]! * su + v[1]! * sv;
+      const pz = cz + u[2]! * su + v[2]! * sv;
+      this.positions.push(px, py, pz);
       this.normals.push(n[0]!, n[1]!, n[2]!);
       const s = shade ? shade[k]! : 1;
-      this.colors.push(color.r * s, color.g * s, color.b * s, 1);
+      if (this.lighter) {
+        // Sample a little inside the face and off the surface so edge vertices don't self-shadow.
+        this.lighter(px + (cx - px) * 0.12 + n[0]! * 0.03, py + (cy - py) * 0.12 + n[1]! * 0.03, pz + (cz - pz) * 0.12 + n[2]! * 0.03, n[0]!, n[1]!, n[2]!, lightTmp);
+        this.colors.push(color.r * s * lightTmp.r, color.g * s * lightTmp.g, color.b * s * lightTmp.b, 1);
+      } else {
+        this.colors.push(color.r * s, color.g * s, color.b * s, 1);
+      }
     }
     this.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }

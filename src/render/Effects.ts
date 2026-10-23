@@ -301,7 +301,7 @@ export class Effects {
   }
 
   /** Bright sparks spraying out along a surface normal. */
-  sparkBurst(x: number, y: number, z: number, nx: number, ny: number, nz: number, count: number, speed = 6): void {
+  sparkBurst(x: number, y: number, z: number, nx: number, ny: number, nz: number, count: number, speed = 6, sizeScale = 1): void {
     const n = Math.max(1, Math.round(count * this.density));
     for (let i = 0; i < n; i++) {
       const sp = speed * (0.4 + Math.random() * 0.8);
@@ -312,8 +312,8 @@ export class Effects {
         (nx + (Math.random() - 0.5) * 1.4) * sp,
         (ny + (Math.random() - 0.2) * 1.4) * sp,
         (nz + (Math.random() - 0.5) * 1.4) * sp,
-        0.12 + Math.random() * 0.15,
-        0.035 + Math.random() * 0.05,
+        (0.12 + Math.random() * 0.15) * (sizeScale > 1 ? 1.6 : 1),
+        (0.035 + Math.random() * 0.05) * sizeScale,
       );
     }
   }

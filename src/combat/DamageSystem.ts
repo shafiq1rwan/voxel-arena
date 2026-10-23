@@ -5,6 +5,7 @@ import type { Enemy } from '../enemies/Enemy';
 import type { EnemyPool } from '../enemies/EnemyPool';
 import { EnemyState } from '../enemies/EnemyTypes';
 import type { Effects } from '../render/Effects';
+import { explosionStats } from '../upgrades/UpgradeTypes';
 
 export interface DamageInfo {
   amount: number;
@@ -27,6 +28,11 @@ export interface DamageInfo {
  */
 export class DamageSystem {
   private killsThisRun = 0;
+  /** Explosive Kills level from upgrades (0 = off). */
+  explosiveLevel = 0;
+  /** Explosions waiting to detonate. Processed next frame so chains resolve without recursion. */
+  private pendingExplosions: { x: number; y: number; z: number }[] = [];
+  private explosionPool: { x: number; y: number; z: number }[] = [];
 
   constructor(
     private pool: EnemyPool,
@@ -37,6 +43,46 @@ export class DamageSystem {
 
   resetRun(): void {
     this.killsThisRun = 0;
+    this.explosiveLevel = 0;
+    for (const e of this.pendingExplosions) this.explosionPool.push(e);
+    this.pendingExplosions.length = 0;
+  }
+
+  /** Detonates queued kill explosions. Kills caused here may queue further explosions (chains). */
+  update(): void {
+    if (this.pendingExplosions.length === 0 || this.explosiveLevel <= 0) return;
+    const batch = this.pendingExplosions.splice(0, this.pendingExplosions.length);
+    const { radius, damage } = explosionStats(this.explosiveLevel);
+    for (const ex of batch) {
+      this.effects.sparkBurst(ex.x, ex.y, ex.z, 0, 1, 0, 26, 8, 2.2);
+      this.effects.debrisBurst(ex.x, ex.y, ex.z, { r: 0.25, g: 0.2, b: 0.18 }, 8, 5, 0.08, 0.2);
+      this.audio.play('explosion');
+      this.bus.emit('explosion', { x: ex.x, y: ex.y, z: ex.z, radius });
+      for (let i = this.pool.active.length - 1; i >= 0; i--) {
+        const e = this.pool.active[i]!;
+        if (!e.alive) continue;
+        const dx = e.body.x - ex.x;
+        const dz = e.body.z - ex.z;
+        const dy = e.centerY - ex.y;
+        const d = Math.hypot(dx, dy, dz);
+        if (d > radius + e.radius) continue;
+        const falloff = 1 - 0.5 * Math.min(1, d / radius);
+        const inv = 1 / (Math.hypot(dx, dz) || 1);
+        this.damageEnemy(e, {
+          amount: damage * falloff,
+          headshot: false,
+          critical: false,
+          x: e.body.x,
+          y: e.centerY,
+          z: e.body.z,
+          dirX: dx * inv,
+          dirZ: dz * inv,
+          knockback: 6,
+          weaponFamily: 'explosion',
+        });
+      }
+      this.explosionPool.push(ex);
+    }
   }
 
   /** Returns true if the enemy died from this hit. */
@@ -89,6 +135,13 @@ export class DamageSystem {
       position: { x: e.body.x, y: e.body.y, z: e.body.z },
       firstOfRun: this.killsThisRun === 1,
     });
+    if (this.explosiveLevel > 0) {
+      const ex = this.explosionPool.pop() ?? { x: 0, y: 0, z: 0 };
+      ex.x = e.body.x;
+      ex.y = cy;
+      ex.z = e.body.z;
+      this.pendingExplosions.push(ex);
+    }
     this.pool.release(e);
   }
 }

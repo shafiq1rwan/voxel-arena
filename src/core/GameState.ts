@@ -4,6 +4,8 @@ export enum AppState {
   MainMenu = 'MAIN_MENU',
   Playing = 'PLAYING',
   Paused = 'PAUSED',
+  /** Between-wave upgrade choice: combat halted, gameplay stopped for the platform. */
+  Upgrade = 'UPGRADE',
   GameOver = 'GAME_OVER',
   AdBreak = 'AD_BREAK',
 }

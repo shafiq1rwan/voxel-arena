@@ -5,7 +5,7 @@ import type { EnemyPool } from '../enemies/EnemyPool';
 import type { EnemySpawner } from '../enemies/EnemySpawner';
 import type { ArchetypeId } from '../enemies/EnemyTypes';
 import type { PlayerController } from '../player/PlayerController';
-import { activeEnemyCap, composeWave } from './ThreatBudget';
+import { activeEnemyCap, composeWave, waveDef } from './ThreatBudget';
 
 export enum WavePhase {
   Prepare = 'PREPARE',
@@ -31,7 +31,10 @@ export class WaveManager {
   /** Set by the game when the REWARD phase needs to wait on a UI choice (Milestone 2 upgrades). */
   onRewardPhase: ((wave: number) => void) | null = null;
 
+  /** Spawn queue, stored reversed so pop() yields the next enemy in order. */
   private queue: ArchetypeId[] = [];
+  /** Composition counts for the HUD / analytics. */
+  shootersThisWave = 0;
   private spawnTimer = 0;
   private rng = new SeededRandom(1);
   private unsubscribe: (() => void) | null = null;
@@ -58,14 +61,20 @@ export class WaveManager {
     this.unsubscribe = null;
   }
 
+  /** Short description of the current wave's threat, from the wave table. */
+  get label(): string {
+    return waveDef(Math.max(1, this.wave)).label;
+  }
+
   get remaining(): number {
     return this.totalThisWave - this.killedThisWave;
   }
 
   private beginPrepare(): void {
     this.wave++;
-    this.queue = composeWave(this.wave, this.rng);
+    this.queue = composeWave(this.wave, this.rng).reverse();
     this.totalThisWave = this.queue.length;
+    this.shootersThisWave = this.queue.filter((id) => id === 'shooter').length;
     this.killedThisWave = 0;
     this.waveTime = 0;
     this.phase = WavePhase.Prepare;
@@ -97,7 +106,7 @@ export class WaveManager {
           this.spawnTimer -= dt;
           if (this.spawnTimer <= 0) {
             this.spawnBatch(player);
-            this.spawnTimer = CONFIG.waves.spawnBatchInterval * (this.wave >= 8 ? 0.7 : 1);
+            this.spawnTimer = CONFIG.waves.spawnBatchInterval * waveDef(this.wave).spawnInterval;
           }
           if (this.queue.length === 0) this.phase = WavePhase.Combat;
         }
@@ -125,7 +134,7 @@ export class WaveManager {
   private spawnBatch(player: PlayerController): void {
     const cap = activeEnemyCap(this.wave);
     const room = cap - this.pool.aliveCount;
-    const batch = Math.min(room, 2 + Math.floor(this.wave / 3), this.queue.length);
+    const batch = Math.min(room, 2 + waveDef(this.wave).batchBonus, this.queue.length);
     const mods = {
       healthScale: 1 + 0.05 * (this.wave - 1),
       speedScale: Math.min(1.25, 1 + 0.025 * (this.wave - 1)),

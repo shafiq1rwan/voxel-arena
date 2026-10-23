@@ -5,7 +5,7 @@ It's built with Babylon.js, TypeScript (strict mode) and Vite.
 
 > *Every arena is different. Every weapon is unique. Every survival run creates a new challenge.*
 
-**Status: Milestone 1 (playable FPS prototype) is complete.** The roadmap is at the bottom.
+**Status: Milestones 1 (playable FPS prototype) and 2 (wave survival) are complete.** The roadmap is at the bottom.
 
 ## Quick start
 
@@ -38,7 +38,8 @@ or open it from any folder or iframe, and it doesn't need a server or a database
 ## What's playable now (Milestone 1)
 
 - **Seeded procedural arenas.** Each run builds a 40 × 40 m arena from a seed:
-  - Four themes: Desert Ruins, Industrial, Frozen Fortress and Neon City.
+  - Four fortress themes, picked per seed (`?theme=ruins|industrial|frozen|neon` forces one): Emberwatch Ruins (amber lanterns, moss, clouds), Foundry Citadel (sodium lamps, shutter doors, pipes, rust, smokestacks), Frostspire Keep (frost braziers, snow caps, icicles, ice spires) and Neon Citadel (neon-outlined bays, holo signs, glowing edge trims, antenna towers).
+  - All four share one fortress skeleton (`src/procedural/FortressDecor.ts`): wall bays, a cornice with merlons and a gatehouse on every wall. Each theme then dresses it with its own kit. Decoration never changes the collision heightmap.
   - Symmetric or free layouts with walls, broken walls, cover, crate stacks, pillars, and raised platforms with staircases.
   - Glowing windows and a backdrop skyline.
   - Generation is validated: every floor cell is reachable, the centre is open, there's a perimeter loop plus axis corridors, and spawns are on open ground away from the player. If validation fails, the generator retries with a deterministic derived seed.
@@ -54,7 +55,18 @@ or open it from any folder or iframe, and it doesn't need a server or a database
 - **Waves.** Wave state machine: `PREPARE → SPAWNING → COMBAT → REWARD → NEXT_WAVE`.
   - The threat budget uses `6 + 3w + floor(0.4w²)` and the concurrency cap uses `min(24, 5 + 2w)`.
   - Enemies spawn in batches at validated points out of the player's sight.
-  - Waves continue endlessly in Milestone 1.
+  - Waves follow a composition table: waves 1–2 are chasers only (wave 2 spawns faster), wave 3 introduces shooters, wave 4 mixes them, and wave 5 onward escalates the mix and spawn rate. Waves still continue endlessly until the boss arrives in Milestone 4.
+  - The first spawns of every wave are melee, so each wave opens readably; shooters are then spread through the rest.
+  - Clearing a wave grants one magazine of reserve ammo.
+- **Shooter enemy** (added in Milestone 2): a slimmer blue robot with a cyan visor and an arm-mounted blaster.
+  - Stats: 45 HP and 7-damage bolts about every 2.5 s, with a threat cost of 2.
+  - AI: SEEK → STRAFE (circles inside a 7–14 m band, flips direction when blocked) → ATTACK (0.6 s telegraph: plants feet, raises the blaster, muzzle glow swells, rising whine) → RECOVER. Losing sight cancels the shot; headshots stagger it and reset its aim.
+  - Bolts are pooled projectiles at 15 m/s that lead your movement only partly, so strafing dodges them. They're swept against walls and the player's capsule every frame, so they never tunnel.
+  - Shooters show as cyan blips on the minimap.
+- **Roguelite upgrades** (added in Milestone 2): after every wave you pick 1 of 3 cards (click, or press 1/2/3). Combat pauses, the mouse is released, and it's re-captured by the pick itself.
+  - All 12 upgrades from the brief: Heavy Rounds, Rapid Fire, Critical Precision, Piercing Shots, Expanded Magazine, Swift Reload, Quick Feet, Dash Charge (Q, with cooldown and brief invulnerability), Reinforced Armor, Regeneration, Last Stand (one lethal hit per wave) and Explosive Kills (chainable).
+  - Offers are seeded per run, weighted by rarity (common/rare/epic), varied by category, and never include a maxed upgrade. Stacks have caps, and the combined weapon stats are capped too.
+  - The bottom-centre HUD shows the dash slot (Q and cooldown) plus a chip for every owned upgrade with its stack count. The results screen lists the run's build.
 - **Pickups.** Health and ammo drop from enemies, with more drops when you're running low. Map pickups also appear at validated points after each wave.
 - **Health, death and restart.** Contact damage gives brief invulnerability, and there's a death camera. The results screen shows wave, time, kills, score, accuracy, headshots, weapon and arena seed, plus a "next goal" prompt.
 - **HUD** laid out like the art direction:
@@ -99,6 +111,8 @@ Key design decisions:
 
 - **Procedural data is separate from rendering.** `procedural/` returns plain data, with no Babylon objects. That makes generation deterministic, unit-testable and reproducible from a seed.
 - **Custom grid physics.** Collision and hit detection query the column heightmap directly: axis-separated sweeps plus 2D DDA raycasts. This is cheaper and more predictable than generic mesh collision.
+- **Lighting is baked, not real-time.** Sun shadows (one ray per vertex toward the sun through the voxel grid) and lantern light pools are written into the arena's vertex colours when the arena is built. There's no shadow map, and the shader uses three lights (sky, sun, muzzle flash). Under a weak-GPU simulation in a Poki-sized frame, this ran about 58% faster than the previous shadow-map version.
+- **Adaptive resolution.** When frames take longer than about 20 ms, the game renders fewer pixels, down to 60% per axis. After a few seconds of comfortable 60 fps it scales back up. This is what keeps weak integrated GPUs and phones playable.
 - **Draw calls stay low.** We measured about 25 WebGL draw calls per frame in combat, including glow passes.
   - Terrain is one merged, vertex-coloured mesh with baked voxel ambient occlusion.
   - Every glow colour gets its own merged mesh.
@@ -153,16 +167,22 @@ Key design decisions:
 | Milestone | Scope | Status |
 | --- | --- | --- |
 | 1. Playable FPS prototype | Arena, controller, rifle, chaser, combat, health, death, restart | ✅ Done |
-| 2. Wave survival | Shooter archetype (projectiles), upgrade selection screen between waves, wave composition table | Next |
-| 3. Procedural content | Component pools and seeded weapon assembly (heavy/rapid/long barrels; energy/explosive/freeze modules), more enemy variation, explosive props, hazards | Planned |
-| 4. Roguelite progression | 10 waves + boss, full upgrade pool + synergies/mutations, achievements, skin gallery, Scrap unlocks | Planned |
+| 2. Wave survival | Shooter archetype (projectiles), upgrade selection screen between waves, wave composition table | ✅ Done |
+| 3. Procedural content | Component pools and seeded weapon assembly (heavy/rapid/long barrels; energy/explosive/freeze modules), more enemy variation, explosive props, hazards | Next |
+| 4. Roguelite progression | 10 waves + boss, Tank and Elite archetypes, upgrade synergies/mutations, achievements, skin gallery, Scrap unlocks | Planned |
 | 5. UI & mobile | Touch controls (joystick, look region, buttons), mobile HUD, loadout screen, accessibility | Planned |
 | 6. Poki preparation | Inspector verification, rewarded-break features, asset/bundle optimisation, device testing | Planned |
 
 The architecture is already set up for these milestones:
 
 - `InputProvider` lets touch controls plug in as another input source.
-- `WaveManager.onRewardPhase` is the hook for the upgrade screen.
+- `WaveDef` entries in `ThreatBudget.ts` take new archetypes (Tank, Elite) by adding weights and minimums.
+- `UpgradeDef.excludes` and the pure `UpgradeManager` are ready for synergy and mutation rules.
 - `ArchetypeDef` and `EnemyState` already include the extra states.
 - Skins are palette-slot mappings that never touch stats.
 - `PlatformAdapter` already supports rewarded breaks.
+
+## Third-party assets
+
+- **Icons:** [Phosphor Icons](https://phosphoricons.com) (`@phosphor-icons/core`), "fill" weight, MIT licence. Only the icons imported in `src/ui/icons.ts` are bundled, and nothing is loaded from a CDN.
+- **Font:** Chakra Petch via `@fontsource/chakra-petch`, SIL Open Font License 1.1.

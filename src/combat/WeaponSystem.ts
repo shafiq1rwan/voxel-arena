@@ -12,6 +12,7 @@ import type { DamageSystem } from './DamageSystem';
 import type { HitDetection } from './HitDetection';
 import type { WeaponViewModel } from './WeaponViewModel';
 import type { SkinPalette, WeaponDefinition, WeaponStats } from './WeaponTypes';
+import { MODIFIER_CAPS, type UpgradeModifiers } from '../upgrades/UpgradeTypes';
 
 const muzzle = new Vector3();
 const SFX: Record<string, SfxName> = { rifle: 'rifle', shotgun: 'shotgun', smg: 'smg' };
@@ -64,6 +65,25 @@ export class WeaponSystem {
     this.ads = 0;
     this.runStats.shotsFired = this.runStats.shotsHit = this.runStats.headshots = 0;
     this.viewModel.build(def, skin);
+  }
+
+  /**
+   * Recomputes live stats from the weapon's base stats and the run's upgrade modifiers (with caps).
+   * A larger magazine is topped up immediately so the upgrade is felt right away.
+   */
+  applyModifiers(m: Readonly<UpgradeModifiers>): void {
+    const b = this.def.stats;
+    const s = this.stats;
+    const prevMag = s.magazineSize;
+    const magMul = Math.min(MODIFIER_CAPS.magazineMul, m.magazineMul);
+    s.damage = b.damage * Math.min(MODIFIER_CAPS.damageMul, m.damageMul);
+    s.fireRate = b.fireRate * Math.min(MODIFIER_CAPS.fireRateMul, m.fireRateMul);
+    s.critChance = Math.min(MODIFIER_CAPS.crit, b.critChance + m.critAdd);
+    s.pierce = Math.min(MODIFIER_CAPS.pierce, b.pierce + m.pierce);
+    s.magazineSize = Math.round(b.magazineSize * magMul);
+    s.reserveMax = Math.round(b.reserveMax * magMul);
+    s.reloadTime = b.reloadTime * Math.max(MODIFIER_CAPS.reloadMulMin, m.reloadMul);
+    if (s.magazineSize > prevMag) this.ammo = Math.min(s.magazineSize, this.ammo + (s.magazineSize - prevMag));
   }
 
   /** Reload progress 0..1, or -1 when not reloading. */

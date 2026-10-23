@@ -28,7 +28,21 @@ export class PlayerController {
   /** 0..1 how fast the player is moving horizontally relative to walk speed. */
   moveAmount = 0;
 
+  /** Lethal hits that will be survived this wave (Last Stand). */
+  lastStandCharges = 0;
+  dashUnlocked = false;
+  /** Seconds until the dash is ready again. */
+  dashCooldown = 0;
+  readonly dashCooldownMax = 3.5;
+  /** Seconds remaining in the current dash (0 when not dashing). */
+  dashTime = 0;
+
+  /** Contact-damage grace after a melee hit. */
   private invulnerable = 0;
+  /** Full invulnerability frames (dash, last stand). */
+  private iframes = 0;
+  private dashDirX = 0;
+  private dashDirZ = 0;
   private coyote = 0;
   private jumpBuffer = 0;
   private bobPhase = 0;
@@ -57,6 +71,11 @@ export class PlayerController {
     this.alive = true;
     this.speedMultiplier = 1;
     this.invulnerable = 0;
+    this.iframes = 0;
+    this.lastStandCharges = 0;
+    this.dashUnlocked = false;
+    this.dashCooldown = 0;
+    this.dashTime = 0;
     this.trauma = 0;
     this.recoilOffset = 0;
     this.stepSmooth = 0;
@@ -97,13 +116,34 @@ export class PlayerController {
     if (aiming) speed *= 0.65;
     const targetX = wishX * speed;
     const targetZ = wishZ * speed;
+    this.dashCooldown = Math.max(0, this.dashCooldown - dt);
+    if (input.abilityPressed && this.dashUnlocked && this.dashCooldown <= 0) {
+      // Dash along the movement input, or straight ahead when standing still.
+      const len = Math.hypot(wishX, wishZ);
+      this.dashDirX = len > 0.1 ? wishX / len : sinY;
+      this.dashDirZ = len > 0.1 ? wishZ / len : cosY;
+      this.dashTime = 0.17;
+      this.dashCooldown = this.dashCooldownMax;
+      this.iframes = Math.max(this.iframes, 0.3);
+      this.addTrauma(0.12);
+      this.bus.emit('player:dashed', {});
+    }
     const accel = this.grounded ? (wishLen > 0.01 ? P.groundAccel : P.groundDecel) : P.airAccel;
     // Approach target velocity along the delta vector (keeps diagonal acceleration consistent).
     const dvx = targetX - this.vx;
     const dvz = targetZ - this.vz;
     const dvLen = Math.hypot(dvx, dvz);
     const maxDv = accel * dt;
-    if (dvLen <= maxDv || dvLen < 1e-5) {
+    if (this.dashTime > 0) {
+      this.dashTime -= dt;
+      this.vx = this.dashDirX * 21;
+      this.vz = this.dashDirZ * 21;
+      if (this.dashTime <= 0) {
+        // Exit the dash at sprint speed so momentum carries without feeling floaty.
+        this.vx = this.dashDirX * P.sprintSpeed;
+        this.vz = this.dashDirZ * P.sprintSpeed;
+      }
+    } else if (dvLen <= maxDv || dvLen < 1e-5) {
       this.vx = targetX;
       this.vz = targetZ;
     } else {
@@ -157,6 +197,7 @@ export class PlayerController {
 
     this.moveAmount = Math.min(1.5, Math.hypot(this.vx, this.vz) / P.walkSpeed);
     this.invulnerable = Math.max(0, this.invulnerable - dt);
+    this.iframes = Math.max(0, this.iframes - dt);
     this.strafeTilt += (-input.moveX * 0.012 - this.strafeTilt) * damp(8, dt);
     this.applyCamera(dt);
   }
@@ -204,14 +245,35 @@ export class PlayerController {
 
   /** Returns true if damage was applied. */
   damage(amount: number, fromX: number, fromZ: number, contact: boolean): boolean {
-    if (!this.alive) return false;
+    if (!this.alive || this.iframes > 0) return false;
     if (contact && this.invulnerable > 0) return false;
+    if (this.health - amount <= 0 && this.lastStandCharges > 0) {
+      // Last Stand: cling on at 1 HP with a moment of invulnerability to escape.
+      this.lastStandCharges--;
+      this.health = 1;
+      this.iframes = 1.2;
+      this.addTrauma(0.7);
+      this.bus.emit('player:damaged', { amount, fromX, fromZ, health: this.health });
+      this.bus.emit('player:lastStand', {});
+      return true;
+    }
     this.health = Math.max(0, this.health - amount);
     if (contact) this.invulnerable = P.contactInvulnerability;
     this.addTrauma(Math.min(0.6, 0.18 + amount * 0.025));
     this.bus.emit('player:damaged', { amount, fromX, fromZ, health: this.health });
     if (this.health <= 0) this.alive = false;
     return true;
+  }
+
+  /** Sets max health (e.g. from Reinforced Armor) without changing current health. */
+  setMaxHealth(max: number): void {
+    this.maxHealth = max;
+    this.health = Math.min(this.health, max);
+  }
+
+  /** 0 = ready, 1 = just used. */
+  get dashCooldown01(): number {
+    return this.dashCooldown / this.dashCooldownMax;
   }
 
   heal(amount: number): number {

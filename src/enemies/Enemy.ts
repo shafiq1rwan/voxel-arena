@@ -1,6 +1,6 @@
 import type { Body } from '../world/VoxelWorld';
 import type { EnemyLook } from '../procedural/EnemyGenerator';
-import type { EnemyRig } from './EnemyRig';
+import { createPose, type EnemyRig, type RigPose } from './EnemyRig';
 import { EnemyState, type ArchetypeDef } from './EnemyTypes';
 
 export interface EnemyRayHit {
@@ -31,6 +31,17 @@ export class Enemy {
   kbz = 0;
   attackLanded = false;
   elite = false;
+  /** Reused animation pose (no per-frame allocation). */
+  readonly pose: RigPose = createPose();
+  /** Ranged: seconds until the next shot may start winding up. */
+  fireCooldown = 0;
+  /** Ranged: +1 / -1 circling direction, flipped periodically or when blocked. */
+  strafeSign = 1;
+  strafeTimer = 0;
+  /** Ranged: seconds the player has been out of sight while strafing. */
+  losLostTime = 0;
+  /** Set by movement when a wall stopped this enemy last frame. */
+  blocked = false;
 
   constructor(
     readonly id: number,
@@ -54,6 +65,12 @@ export class Enemy {
     this.losTimer = Math.random() * 0.3;
     this.hasLos = false;
     this.attackLanded = false;
+    this.blocked = false;
+    this.losLostTime = 0;
+    this.strafeSign = Math.random() < 0.5 ? -1 : 1;
+    this.strafeTimer = 1 + Math.random() * 1.5;
+    // Stagger the first shot so a freshly spawned group doesn't volley in sync.
+    this.fireCooldown = archetype.ranged ? archetype.ranged.fireInterval * (0.4 + Math.random() * 0.6) : 0;
     this.rig.configure(look);
     this.rig.setVisible(true);
     this.syncRig();

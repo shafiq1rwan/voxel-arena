@@ -43,6 +43,7 @@ export class Analytics {
       this.track('run_completed', { victory: e.victory, wave: e.wave, kills: e.kills, timeSec: Math.round(e.timeSec), seed: e.seed }),
     );
     bus.on('run:retry', (e) => this.track('retry_clicked', { seed: e.seed }));
+    bus.on('upgrade:selected', (e) => this.track('upgrade_selected', { upgrade: e.id, wave: e.wave, stacks: e.stacks, build: e.build, seed: this.runSeed }));
   }
 
   addSink(sink: (event: AnalyticsEvent, props: Props) => void): void {

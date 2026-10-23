@@ -54,4 +54,9 @@ export interface GameEvents {
   'weapon:reloadEnd': Record<string, never>;
   'weapon:dryFire': Record<string, never>;
   'pickup:collected': { kind: 'health' | 'ammo'; amount: number };
+  'player:dashed': Record<string, never>;
+  'player:lastStand': Record<string, never>;
+  'upgrade:offered': { wave: number; ids: string[] };
+  'upgrade:selected': { id: string; wave: number; stacks: number; build: string };
+  'explosion': { x: number; y: number; z: number; radius: number };
 }

@@ -17,8 +17,8 @@ export class MaterialLibrary {
       m.diffuseColor = Color3.White();
       m.specularColor = new Color3(specular, specular, specular);
       m.specularPower = 32;
-      // Sun + sky + muzzle + three fixed lanterns. Fixed light counts avoid shader churn.
-      m.maxSimultaneousLights = key === 'arena' ? 6 : 3;
+      // Hemisphere + sun + muzzle flash. Static lighting is baked into vertex colours.
+      m.maxSimultaneousLights = 3;
       return m;
     });
   }

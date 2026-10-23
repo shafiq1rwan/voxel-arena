@@ -21,6 +21,10 @@ export interface EnemyLook {
   horns: boolean;
   armor: boolean;
   backpack: boolean;
+  /** Carries an arm-mounted blaster (ranged archetypes). */
+  gun: boolean;
+  /** Emissive eye/core colour family; also tells players which archetype they face. */
+  eyes: 'red' | 'cyan';
 }
 
 /** [body, accent, limbs]. Saturated reds/oranges so chasers read instantly against any theme. */
@@ -32,15 +36,44 @@ const CHASER_PALETTES: readonly [string, string, string][] = [
   ['#9c2f2f', '#ff6a3c', '#2a1c1e'],
 ];
 
+/** Cool blues/teals so shooters are distinguishable from chasers at a glance. */
+const SHOOTER_PALETTES: readonly [string, string, string][] = [
+  ['#2f6fd0', '#7fe3ff', '#1c2433'],
+  ['#2a5cb8', '#a8f0ff', '#1a2030'],
+  ['#3b7ee0', '#5fd4ff', '#202838'],
+  ['#2d86b8', '#c4f6ff', '#18232e'],
+];
+
 export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom): EnemyLook {
+  const jitter = (c: RGB) => {
+    const k = rng.range(0.88, 1.12);
+    return { r: c.r * k, g: c.g * k, b: c.b * k };
+  };
   switch (archetype) {
+    case 'shooter': {
+      const [body, accent, limbs] = rng.pick(SHOOTER_PALETTES);
+      const bodyRgb = jitter(hexToRgb(body));
+      return {
+        body: bodyRgb,
+        limbs: jitter(hexToRgb(limbs)),
+        head: mixRgb(bodyRgb, hexToRgb(limbs), rng.range(0.15, 0.4)),
+        accent: hexToRgb(accent),
+        // Slimmer and a touch shorter than chasers: a different silhouette, not just a recolour.
+        scale: rng.range(0.9, 1.0),
+        bodyWidth: rng.range(0.46, 0.54),
+        bodyHeight: rng.range(0.58, 0.68),
+        headSize: rng.range(0.34, 0.4),
+        armLength: rng.range(0.5, 0.58),
+        horns: false,
+        armor: rng.chance(0.6),
+        backpack: rng.chance(0.7),
+        gun: true,
+        eyes: 'cyan',
+      };
+    }
     case 'chaser':
     default: {
       const [body, accent, limbs] = rng.pick(CHASER_PALETTES);
-      const jitter = (c: RGB) => {
-        const k = rng.range(0.88, 1.12);
-        return { r: c.r * k, g: c.g * k, b: c.b * k };
-      };
       const bodyRgb = jitter(hexToRgb(body));
       return {
         body: bodyRgb,
@@ -55,6 +88,8 @@ export function generateEnemyLook(archetype: ArchetypeId, rng: SeededRandom): En
         horns: rng.chance(0.3),
         armor: rng.chance(0.45),
         backpack: rng.chance(0.25),
+        gun: false,
+        eyes: 'red',
       };
     }
   }

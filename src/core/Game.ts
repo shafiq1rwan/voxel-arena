@@ -1,6 +1,7 @@
 import { AudioManager } from '../audio/AudioManager';
 import { DamageSystem } from '../combat/DamageSystem';
 import { HitDetection } from '../combat/HitDetection';
+import { ProjectileSystem } from '../combat/ProjectileSystem';
 import { WeaponSystem } from '../combat/WeaponSystem';
 import { WeaponViewModel } from '../combat/WeaponViewModel';
 import type { WeaponFamily } from '../combat/WeaponTypes';
@@ -25,7 +26,11 @@ import { MainMenu } from '../ui/MainMenu';
 import { PauseMenu } from '../ui/PauseMenu';
 import { ResultsScreen } from '../ui/ResultsScreen';
 import { SettingsPanel } from '../ui/SettingsPanel';
-import { WaveManager } from '../waves/WaveManager';
+import { HowToPlay } from '../ui/HowToPlay';
+import { WaveManager, WavePhase } from '../waves/WaveManager';
+import { UpgradeManager } from '../upgrades/UpgradeManager';
+import { MODIFIER_CAPS, UPGRADES, type UpgradeId } from '../upgrades/UpgradeTypes';
+import { UpgradeScreen } from '../ui/UpgradeScreen';
 import { ArenaRenderer } from '../world/ArenaRenderer';
 import { NavGrid } from '../world/NavGrid';
 import { VoxelWorld } from '../world/VoxelWorld';
@@ -77,6 +82,9 @@ export class Game {
   private waves: WaveManager;
   private pickups: PickupSystem;
   private player: PlayerController;
+  private projectiles: ProjectileSystem;
+  private upgrades = new UpgradeManager();
+  private upgradeRng = new SeededRandom(1);
   private ai: EnemyAI | null = null;
   private arenaRenderer: ArenaRenderer;
 
@@ -85,6 +93,11 @@ export class Game {
   private pauseMenu: PauseMenu;
   private results: ResultsScreen;
   private settingsPanel: SettingsPanel;
+  private upgradeScreen: UpgradeScreen;
+  private howToPlay: HowToPlay;
+  /** Seconds until the upgrade screen opens after a wave is cleared (lets the banner land). */
+  private rewardDelay = 0;
+  private regenTimer = 0;
 
   private arena: ArenaData | null = null;
   private theme: ThemePalette = THEMES.ruins;
@@ -99,7 +112,7 @@ export class Game {
   private resumePending = false;
   private readonly testMode: boolean;
   private readonly isTouch: boolean;
-  private enemyBlips: { x: number; z: number }[] = [];
+  private enemyBlips: { x: number; z: number; kind: string }[] = [];
   private pickupBlips: { x: number; z: number; kind: string }[] = [];
 
   constructor(canvas: HTMLCanvasElement, uiRoot: HTMLElement) {
@@ -127,12 +140,15 @@ export class Game {
     this.waves = new WaveManager(this.spawner, this.pool, this.bus);
     this.pickups = new PickupSystem(scene, mats, this.effects, this.audio, this.bus);
     this.player = new PlayerController(this.sm.camera, this.bus);
+    this.projectiles = new ProjectileSystem(scene, mats, this.effects, this.audio);
 
     this.hud = new HUD(uiRoot);
     this.menu = new MainMenu(uiRoot, this.isTouch);
     this.pauseMenu = new PauseMenu(uiRoot);
     this.results = new ResultsScreen(uiRoot);
     this.settingsPanel = new SettingsPanel(uiRoot);
+    this.upgradeScreen = new UpgradeScreen(uiRoot);
+    this.howToPlay = new HowToPlay(uiRoot);
 
     this.wireUi();
     this.wireEvents();
@@ -149,7 +165,9 @@ export class Game {
     this.bus.emit('game:loaded', { loadMs: performance.now() - loadStart });
 
     this.sm.engine.runRenderLoop(() => {
-      const dt = Math.min(0.05, this.sm.engine.getDeltaTime() / 1000);
+      const frameMs = this.sm.engine.getDeltaTime();
+      const dt = Math.min(0.05, frameMs / 1000);
+      if (this.state.is(AppState.Playing, AppState.MainMenu)) this.sm.updateAdaptiveResolution(frameMs);
       this.update(dt);
       this.sm.scene.render();
     });
@@ -167,6 +185,12 @@ export class Game {
       void this.startRun(seedText);
     };
     this.menu.onSettings = () => this.openSettings();
+    this.menu.onHowToPlay = () => this.openHowToPlay();
+    this.pauseMenu.onHowToPlay = () => this.openHowToPlay();
+    this.howToPlay.onClose = () => {
+      this.howToPlay.close();
+      this.audio.play('click');
+    };
     this.pauseMenu.onResume = () => this.resume();
     this.pauseMenu.onSettings = () => this.openSettings();
     this.pauseMenu.onQuit = () => this.quitToMenu();
@@ -176,6 +200,10 @@ export class Game {
       void this.startRun('');
     };
     this.results.onMenu = () => this.quitToMenu();
+    this.upgradeScreen.onChoose = (id) => void this.chooseUpgrade(id);
+    this.waves.onRewardPhase = () => {
+      this.rewardDelay = 1.6;
+    };
     this.hud.onPauseClick = () => this.pause();
     this.settingsPanel.onChange = (patch) => {
       this.save.updateSettings(patch);
@@ -216,13 +244,27 @@ export class Game {
     bus.on('player:damaged', (e) => this.hud.damaged(e.fromX, e.fromZ, e.amount));
     bus.on('wave:started', (e) => {
       this.audio.play('waveStart');
-      if (e.wave > 1) this.hud.toast(`${e.totalEnemies} enemies incoming`, 1.8);
+      this.player.lastStandCharges = this.upgrades.modifiers.lastStandPerWave;
+      this.regenTimer = 0;
+      const shooters = this.waves.shootersThisWave;
+      if (e.wave > 1) this.hud.toast(shooters ? `${e.totalEnemies} enemies · ${shooters} shooters` : `${e.totalEnemies} enemies incoming`, 2);
+    });
+    bus.on('player:dashed', () => this.audio.play('dash'));
+    bus.on('player:lastStand', () => {
+      this.audio.play('lastStand');
+      this.hud.toast('LAST STAND!', 1.6);
+    });
+    bus.on('explosion', (e) => {
+      const d = Math.hypot(e.x - this.player.body.x, e.z - this.player.body.z);
+      if (d < 12) this.player.addTrauma(0.25 * (1 - d / 12));
     });
     bus.on('wave:completed', (e) => {
       this.run.wavesCompleted = e.wave;
       this.run.score += 50 * e.wave;
       this.audio.play('waveClear');
       this.pickups.placeMapPickups();
+      // Small resupply so a cleared wave never leaves the player stranded without ammo.
+      this.weapons.addAmmo(1);
     });
     bus.on('pickup:collected', (e) => this.hud.toast(e.kind === 'health' ? `+${Math.round(e.amount)} HEALTH` : `+${e.amount} AMMO`, 1.2));
   }
@@ -238,6 +280,11 @@ export class Game {
   }
   private qualityApplied = false;
 
+  private openHowToPlay(): void {
+    this.audio.play('click');
+    this.howToPlay.open();
+  }
+
   private openSettings(): void {
     this.audio.play('click');
     this.settingsPanel.open(this.save.data.settings);
@@ -246,15 +293,14 @@ export class Game {
   // ------------------------------------------------------------------ arena
 
   private loadArena(seed: number): void {
-    // The pitch's fortress is the default. Other existing biomes remain available by URL.
+    // Each seed picks its own theme; `?theme=` can force one for testing.
     const requested = new URLSearchParams(location.search).get('theme');
-    const themeId: ThemeId = THEME_IDS.includes(requested as ThemeId) ? requested as ThemeId : 'ruins';
-    const data = generateArena(seed, { ...ARENA_OPTIONS, themeId });
+    const themeId = THEME_IDS.includes(requested as ThemeId) ? (requested as ThemeId) : undefined;
+    const data = generateArena(seed, themeId ? { ...ARENA_OPTIONS, themeId } : ARENA_OPTIONS);
     this.arena = data;
     this.theme = THEMES[data.themeId];
     this.sm.applyTheme(this.theme);
     this.arenaRenderer.build(data, this.theme);
-    this.sm.setArenaMeshes(this.arenaRenderer.meshes);
     this.world = new VoxelWorld(data);
     this.nav = new NavGrid(data);
     this.nav.compute(data.playerStart.x, data.playerStart.z);
@@ -273,6 +319,8 @@ export class Game {
     this.waves.stop();
     this.pool.releaseAll();
     this.pickups.clear();
+    this.projectiles.clear();
+    this.upgradeScreen.hide();
     this.hud.hide();
     this.pauseMenu.hide();
     this.results.hide();
@@ -314,8 +362,8 @@ export class Game {
 
     this.run = { seed, timeSec: 0, kills: 0, score: 0, wavesCompleted: 0, deathTimer: 0 };
     const c = data.size / 2;
-    // Frame the fortress gatehouse on entry; other biomes keep the spawn-facing view.
-    this.player.spawn(world, data.playerStart.x + 0.5, data.playerStart.z + 0.5, data.themeId === 'ruins' ? Math.atan2(data.size * 0.36 - c, data.size - c) : Math.atan2(data.spawnPoints[0]!.x - c, data.spawnPoints[0]!.z - c));
+    // Every theme opens framed on the tallest gatehouse.
+    this.player.spawn(world, data.playerStart.x + 0.5, data.playerStart.z + 0.5, Math.atan2(data.size * 0.36 - c, data.size - c));
 
     const family: WeaponFamily = 'rifle';
     const weapon = createWeapon(family, new SeededRandom(seed).fork('weapon'));
@@ -327,8 +375,16 @@ export class Game {
 
     this.pool.releaseAll();
     this.damage.resetRun();
+    this.upgrades.reset();
+    this.upgradeRng = new SeededRandom(seed).fork('upgrades');
+    this.applyUpgrades(null);
+    this.hud.setBuild([], false);
+    this.upgradeScreen.hide();
+    this.rewardDelay = 0;
+    this.regenTimer = 0;
+    this.projectiles.bind(world, this.player);
     this.spawner.setArena(data, world, seed);
-    const aiCtx = { world, nav: this.nav!, player: this.player, audio: this.audio };
+    const aiCtx = { world, nav: this.nav!, player: this.player, audio: this.audio, projectiles: this.projectiles, effects: this.effects };
     if (!this.ai) this.ai = new EnemyAI(this.pool, aiCtx);
     else this.ai.setContext(aiCtx);
     this.pickups.bind(data, world, this.player, this.weapons, new SeededRandom(seed).fork('pickups'));
@@ -348,6 +404,68 @@ export class Game {
     }
   }
 
+  // ------------------------------------------------------------------ upgrades
+
+  private openUpgradeScreen(): void {
+    const offered = this.upgrades.offer(this.upgradeRng);
+    if (offered.length === 0) {
+      // Every upgrade is maxed: nothing to choose, continue straight to the next wave.
+      this.waves.completeReward();
+      return;
+    }
+    this.state.set(AppState.Upgrade);
+    this.platform.gameplayStop();
+    this.input.desktop.setEnabled(false);
+    this.input.reset();
+    this.input.desktop.exitLock();
+    this.hud.hideBanner();
+    this.bus.emit('upgrade:offered', { wave: this.waves.wave, ids: offered.map((d) => d.id) });
+    this.upgradeScreen.show(this.waves.wave, offered, (id) => this.upgrades.stacksOf(id), this.upgrades.owned);
+  }
+
+  private async chooseUpgrade(id: UpgradeId): Promise<void> {
+    if (!this.state.is(AppState.Upgrade)) return;
+    // Re-capture the mouse inside the click/keypress gesture that picked the card.
+    const lockPromise = this.testMode ? Promise.resolve(true) : this.input.desktop.requestLock();
+    if (!this.upgrades.choose(id)) return;
+    this.applyUpgrades(id);
+    const def = UPGRADES[id];
+    const stacks = this.upgrades.stacksOf(id);
+    this.audio.play('upgrade');
+    this.bus.emit('upgrade:selected', {
+      id,
+      wave: this.waves.wave,
+      stacks,
+      build: this.upgrades.owned.map((o) => `${o.def.id}:${o.stacks}`).join(','),
+    });
+    this.hud.setBuild(this.upgrades.owned, this.player.dashUnlocked);
+    this.hud.toast(`${def.name.toUpperCase()}${stacks > 1 ? ` x${stacks}` : ''} ACQUIRED`, 1.8);
+    this.upgradeScreen.hide();
+    this.waves.completeReward();
+    this.state.set(AppState.Playing);
+
+    const locked = await lockPromise;
+    if (!this.state.is(AppState.Playing)) return;
+    if (locked) {
+      this.input.desktop.setEnabled(true);
+      this.platform.gameplayStart();
+    } else {
+      this.pause('Click RESUME to continue');
+    }
+  }
+
+  /** Pushes the run's aggregate upgrade modifiers into every affected system. */
+  private applyUpgrades(justTaken: UpgradeId | null): void {
+    const m = this.upgrades.modifiers;
+    this.weapons.applyModifiers(m);
+    this.player.speedMultiplier = Math.min(MODIFIER_CAPS.moveMul, m.moveMul);
+    this.player.setMaxHealth(CONFIG.player.maxHealth + m.maxHealthAdd);
+    this.player.dashUnlocked = m.dash;
+    this.damage.explosiveLevel = m.explosiveLevel;
+    if (justTaken === 'reinforcedArmor') this.player.heal(20);
+    if (justTaken === 'lastStand') this.player.lastStandCharges = m.lastStandPerWave;
+  }
+
   private pause(info?: string): void {
     if (!this.state.is(AppState.Playing)) return;
     this.state.set(AppState.Paused);
@@ -355,8 +473,16 @@ export class Game {
     this.input.desktop.setEnabled(false);
     this.input.reset();
     this.input.desktop.exitLock();
-    const w = this.waves;
-    this.pauseMenu.show(info ?? `Wave ${w.wave} · ${this.theme.name} · Seed ${seedToCode(this.run.seed)}`);
+    this.hud.hideBanner();
+    this.pauseMenu.show({
+      wave: this.waves.wave,
+      timeSec: this.run.timeSec,
+      kills: this.run.kills,
+      score: this.run.score,
+      arena: `${this.theme.name} · Seed ${seedToCode(this.run.seed)}`,
+      build: this.upgrades.owned,
+      message: info,
+    });
   }
 
   private async resume(): Promise<void> {
@@ -372,6 +498,7 @@ export class Game {
     }
     this.pauseMenu.hide();
     this.settingsPanel.close();
+    this.howToPlay.close();
     this.state.set(AppState.Playing);
     this.input.desktop.setEnabled(true);
     this.platform.gameplayStart();
@@ -379,7 +506,7 @@ export class Game {
 
   private quitToMenu(): void {
     this.audio.play('click');
-    if (this.state.is(AppState.Playing, AppState.Paused) && this.run.timeSec > 1) this.finishRun(false, false);
+    if (this.state.is(AppState.Playing, AppState.Paused, AppState.Upgrade) && this.run.timeSec > 1) this.finishRun(false, false);
     this.enterMenu();
   }
 
@@ -418,6 +545,7 @@ export class Game {
       newBestWave: outcome.newBestWave,
       newHighScore: outcome.newHighScore,
       bestWave: this.save.data.records.bestWave,
+      build: this.upgrades.owned,
     });
   }
 
@@ -434,6 +562,7 @@ export class Game {
         this.updatePlaying(dt);
         break;
       case AppState.GameOver:
+      case AppState.Upgrade:
         this.effects.update(dt);
         break;
       default:
@@ -473,6 +602,7 @@ export class Game {
       cam.rotation.z = lerp(cam.rotation.z, 0.6, dt * 2.5);
       cam.rotation.x = lerp(cam.rotation.x, -0.25, dt * 2);
       this.ai?.update(dt);
+      this.projectiles.update(dt);
       this.effects.update(dt);
       if (this.run.deathTimer <= 0) this.finishRun(false, true);
       return;
@@ -483,12 +613,33 @@ export class Game {
     player.update(dt, input, input.aim, ads > 0.5 ? 0.75 : 1);
     this.weapons.update(dt, input, player, player.alive);
     this.ai?.update(dt);
+    this.projectiles.update(dt);
+    this.damage.update();
     this.waves.update(dt, player);
     this.pickups.update(dt);
     this.effects.update(dt);
 
-    // ADS zoom.
-    this.sm.setFov(settings.fov * (1 - 0.2 * ads));
+    // Regeneration ticks only while a wave is actually being fought.
+    const regen = this.upgrades.modifiers.regenPer10s;
+    if (regen > 0 && player.alive && (this.waves.phase === WavePhase.Spawning || this.waves.phase === WavePhase.Combat)) {
+      this.regenTimer += dt;
+      if (this.regenTimer >= 10) {
+        this.regenTimer -= 10;
+        player.heal(regen);
+      }
+    }
+
+    // Upgrade screen opens shortly after the wave-clear banner.
+    if (this.rewardDelay > 0) {
+      this.rewardDelay -= dt;
+      if (this.rewardDelay <= 0 && player.alive && this.waves.phase === WavePhase.Reward) {
+        this.openUpgradeScreen();
+        return;
+      }
+    }
+
+    // ADS zoom, plus a short FOV kick while dashing.
+    this.sm.setFov(settings.fov * (1 - 0.2 * ads) * (player.dashTime > 0 ? 1.08 : 1));
 
     if (!player.alive) {
       this.onPlayerDeath();
@@ -516,6 +667,8 @@ export class Game {
       playerX: player.body.x,
       playerZ: player.body.z,
       yaw: player.yaw,
+      waveLabel: w.label,
+      dashCooldown: player.dashUnlocked ? player.dashCooldown01 : undefined,
     });
 
     this.minimapTimer -= dt;
@@ -529,7 +682,7 @@ export class Game {
   private drawMinimap(): void {
     const enemies = this.enemyBlips;
     enemies.length = 0;
-    for (const e of this.pool.active) if (e.alive) enemies.push({ x: e.body.x, z: e.body.z });
+    for (const e of this.pool.active) if (e.alive) enemies.push({ x: e.body.x, z: e.body.z, kind: e.archetype.id });
     const pickups = this.pickupBlips;
     pickups.length = 0;
     this.pickups.forEachActive((x, z, kind) => pickups.push({ x, z, kind }));
@@ -551,7 +704,8 @@ export class Game {
         `spawns ${a.spawnPoints.length}  pickups ${a.pickupPoints.length}`,
         `pos ${p.x.toFixed(1)} ${p.y.toFixed(2)} ${p.z.toFixed(1)}  ground ${this.player.grounded}`,
         `wave ${this.waves.wave} ${this.waves.phase}  alive ${this.pool.aliveCount}  remaining ${this.waves.remaining}`,
-        `active meshes ${this.sm.scene.getActiveMeshes().length}  quality ${this.sm.qualityLevel}`,
+        `active meshes ${this.sm.scene.getActiveMeshes().length}  quality ${this.sm.qualityLevel}  render scale ${Math.round(this.sm.renderScale * 100)}%  projectiles ${this.projectiles.activeCount}`,
+        `build ${this.upgrades.owned.map((o) => `${o.def.id}${o.stacks > 1 ? 'x' + o.stacks : ''}`).join(' ') || '-'}`,
       ].join('\n'),
     );
   }

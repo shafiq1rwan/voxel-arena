@@ -15,6 +15,8 @@ import { VoxelMeshBuilder, type RGB } from '../render/VoxelMeshBuilder';
 export class EnemyRenderer {
   readonly cube: Mesh;
   readonly eye: Mesh;
+  /** Cyan emissive variant (ranged archetypes' eyes, cores and blaster tips). */
+  readonly eyeCyan: Mesh;
 
   constructor(scene: Scene, materials: MaterialLibrary) {
     const b = new VoxelMeshBuilder();
@@ -32,8 +34,10 @@ export class EnemyRenderer {
     e.addBox(0, 0, 0, 1, 1, 1, { r: 1, g: 1, b: 1 }, { faceShade: false });
     this.eye = e.build('enemy_eye_src', scene, { colors: false });
     this.eye.material = materials.emissive('#ff3a26', 1.5);
+    this.eyeCyan = e.build('enemy_eye_cyan_src', scene, { colors: false });
+    this.eyeCyan.material = materials.emissive('#3fd8ff', 1.5);
 
-    for (const src of [this.cube, this.eye]) {
+    for (const src of [this.cube, this.eye, this.eyeCyan]) {
       src.isPickable = false;
       // Sources stay enabled (instances render through them) but are hidden far below the map.
       src.position.set(0, -500, 0);
@@ -46,6 +50,28 @@ interface Part {
   mesh: InstancedMesh;
   base: RGB;
   color: Color4;
+}
+
+/** Per-frame animation inputs. One object is reused per enemy to avoid allocations. */
+export interface RigPose {
+  /** Horizontal speed (m/s), drives the walk cycle. */
+  speed: number;
+  /** 0..1 melee wind-up (arms raised). */
+  attack: number;
+  /** 0..1 melee follow-through. */
+  swing: number;
+  /** 0..1 rising out of the ground. */
+  spawn: number;
+  /** 0..1 hit stagger. */
+  stagger: number;
+  /** 0..1 blaster arm raised to aim. */
+  aim: number;
+  /** 0..1 blaster charge (telegraphs an incoming shot). */
+  charge: number;
+}
+
+export function createPose(): RigPose {
+  return { speed: 0, attack: 0, swing: 0, spawn: 1, stagger: 0, aim: 0, charge: 0 };
 }
 
 /** Animated voxel humanoid assembled from instanced cubes; reconfigured per spawn from an EnemyLook. */
@@ -72,6 +98,13 @@ export class EnemyRig {
   private eyeL: InstancedMesh;
   private eyeR: InstancedMesh;
   private core: InstancedMesh;
+  private eyeLc: InstancedMesh;
+  private eyeRc: InstancedMesh;
+  private coreC: InstancedMesh;
+  private gunBody: Part;
+  private gunBarrel: Part;
+  private gunTip: InstancedMesh;
+  private hasGun = false;
   private armorDetails: Part[] = [];
 
   /** Current dimensions (world metres, scale applied) for hitboxes. */
@@ -130,13 +163,21 @@ export class EnemyRig {
       ['fistL', this.shoulderL], ['fistR', this.shoulderR],
       ['helmet', this.neck], ['jaw', this.neck], ['belt', this.torso],
     ] as const) this.armorDetails.push(part(name, parent));
-    this.core = renderer.eye.createInstance(`core_${id}`);
-    this.core.parent = this.torso;
-    this.core.isPickable = false;
-    this.eyeL = renderer.eye.createInstance(`eyeL_${id}`);
-    this.eyeR = renderer.eye.createInstance(`eyeR_${id}`);
-    this.eyeL.parent = this.neck;
-    this.eyeR.parent = this.neck;
+    this.gunBody = part('gunBody', this.shoulderR);
+    this.gunBarrel = part('gunBarrel', this.shoulderR);
+    const glow = (src: Mesh, name: string, parent: TransformNode) => {
+      const m = src.createInstance(`${name}_${id}`);
+      m.parent = parent;
+      m.isPickable = false;
+      return m;
+    };
+    this.core = glow(renderer.eye, 'core', this.torso);
+    this.eyeL = glow(renderer.eye, 'eyeL', this.neck);
+    this.eyeR = glow(renderer.eye, 'eyeR', this.neck);
+    this.coreC = glow(renderer.eyeCyan, 'coreC', this.torso);
+    this.eyeLc = glow(renderer.eyeCyan, 'eyeLc', this.neck);
+    this.eyeRc = glow(renderer.eyeCyan, 'eyeRc', this.neck);
+    this.gunTip = glow(renderer.eyeCyan, 'gunTip', this.shoulderR);
     this.root.setEnabled(false);
   }
 
@@ -173,10 +214,20 @@ export class EnemyRig {
     set(this.head, 0, hs / 2, 0, hs, hs, hs, look.head);
     set(this.hornL, -hs * 0.32, hs + 0.07, 0, 0.07, 0.16, 0.07, look.accent, look.horns);
     set(this.hornR, hs * 0.32, hs + 0.07, 0, 0.07, 0.16, 0.07, look.accent, look.horns);
-    this.eyeL.position.set(-hs * 0.22, hs * 0.55, hs / 2 + 0.005);
-    this.eyeR.position.set(hs * 0.22, hs * 0.55, hs / 2 + 0.005);
-    this.eyeL.scaling.set(0.09, 0.06, 0.02);
-    this.eyeR.scaling.set(0.09, 0.06, 0.02);
+    const cyan = look.eyes === 'cyan';
+    for (const [l, r, on] of [
+      [this.eyeL, this.eyeR, !cyan],
+      [this.eyeLc, this.eyeRc, cyan],
+    ] as const) {
+      l.position.set(-hs * 0.22, hs * 0.55, hs / 2 + 0.005);
+      r.position.set(hs * 0.22, hs * 0.55, hs / 2 + 0.005);
+      // Ranged units get a single wide visor slit instead of two eyes.
+      l.scaling.set(cyan ? hs * 0.72 : 0.09, cyan ? 0.05 : 0.06, 0.02);
+      r.scaling.set(0.09, 0.06, 0.02);
+      if (cyan) l.position.x = 0;
+      l.setEnabled(on);
+      r.setEnabled(on && !cyan);
+    }
 
     const shoulderY = bh - 0.06;
     this.shoulderL.position.set(-(bw / 2 + armW / 2), shoulderY, 0);
@@ -197,8 +248,24 @@ export class EnemyRig {
     ];
     details.forEach((d, i) => set(this.armorDetails[i]!, d[0]!, d[1]!, d[2]!, d[3]!, d[4]!, d[5]!,
       i === 4 || i === 5 ? look.body : steel));
-    this.core.position.set(0, bh * 0.56, 0.225);
-    this.core.scaling.set(bw * 0.23, bh * 0.15, 0.025);
+    for (const [c, on] of [
+      [this.core, !cyan],
+      [this.coreC, cyan],
+    ] as const) {
+      c.position.set(0, bh * 0.56, 0.225);
+      c.scaling.set(bw * 0.23, bh * 0.15, 0.025);
+      c.setEnabled(on);
+    }
+
+    // Arm-mounted blaster: hangs along the forearm, points forward when the arm is raised.
+    this.hasGun = look.gun;
+    // Built along the arm's local -Y axis so it points forward when the arm is raised to aim.
+    const gunY = -armL + 0.02;
+    set(this.gunBody, 0, gunY, 0.04, 0.17, 0.36, 0.17, look.limbs, look.gun);
+    set(this.gunBarrel, 0, gunY - 0.26, 0.04, 0.08, 0.2, 0.08, look.accent, look.gun);
+    this.gunTip.position.set(0, gunY - 0.37, 0.04);
+    this.gunTip.scaling.set(0.06, 0.02, 0.06);
+    this.gunTip.setEnabled(look.gun);
 
     this.legLength = legLen * s;
     this.bodyTop = (legLen + bh) * s;
@@ -217,29 +284,43 @@ export class EnemyRig {
     this.flash = 0.09;
   }
 
-  /**
-   * Poses the rig. `speed` drives the walk cycle; `attack` (0..1) raises the arms for a swing;
-   * `spawn` (0..1) rises the body out of the ground.
-   */
-  animate(dt: number, speed: number, attack: number, swing: number, spawn: number, stagger: number): void {
-    this.walkPhase += dt * (4 + speed * 2.4);
-    const amp = Math.min(1, speed / 3.5) * 0.75;
+  /** Poses the rig for this frame. */
+  animate(dt: number, pose: RigPose): void {
+    this.walkPhase += dt * (4 + pose.speed * 2.4);
+    const amp = Math.min(1, pose.speed / 3.5) * 0.75;
     const sw = Math.sin(this.walkPhase) * amp;
     this.hipL.rotation.x = sw;
     this.hipR.rotation.x = -sw;
-    const armRaise = attack * -2.1 + swing * 1.6;
-    this.shoulderL.rotation.x = -sw * 0.8 + armRaise;
-    this.shoulderR.rotation.x = sw * 0.8 + armRaise;
-    this.torso.rotation.x = attack * -0.15 + swing * 0.35 + stagger * -0.4;
+    const armRaise = pose.attack * -2.1 + pose.swing * 1.6;
+    const aim = pose.aim;
+    // Aiming raises the blaster arm level with the shoulder (-PI/2 points the arm forward).
+    this.shoulderL.rotation.x = (-sw * 0.8 + armRaise) * (1 - aim) + -0.9 * aim;
+    this.shoulderR.rotation.x = (sw * 0.8 + armRaise) * (1 - aim) + -1.5 * aim;
+    this.shoulderL.rotation.y = 0.45 * aim;
+    this.torso.rotation.x = pose.attack * -0.15 + pose.swing * 0.35 + pose.stagger * -0.4;
     this.torso.position.y = this.legLength / Math.max(0.001, this.scaleNode.scaling.y) + Math.abs(Math.cos(this.walkPhase)) * amp * 0.05;
-    this.neck.rotation.x = stagger * -0.3;
-    this.scaleNode.position.y = (spawn - 1) * 1.9;
+    this.neck.rotation.x = pose.stagger * -0.3;
+    this.scaleNode.position.y = (pose.spawn - 1) * 1.9;
+    if (this.hasGun) {
+      // Charging telegraph: the muzzle glow swells before each shot.
+      const k = 1 + pose.charge * 2.2;
+      this.gunTip.scaling.set(0.06 * k, 0.02 + pose.charge * 0.06, 0.06 * k);
+    }
 
     if (this.flash > 0) {
       this.flash -= dt;
       const t = Math.max(0, this.flash / 0.09);
       for (const p of this.parts) p.color.set(p.base.r + (1 - p.base.r) * t, p.base.g + (1 - p.base.g) * t, p.base.b + (1 - p.base.b) * t, 1);
     }
+  }
+
+  /** World-space blaster muzzle (computed on demand; only called when a shot is fired). */
+  getMuzzleWorld(out: { x: number; y: number; z: number }): void {
+    this.gunTip.computeWorldMatrix(true);
+    const p = this.gunTip.getAbsolutePosition();
+    out.x = p.x;
+    out.y = p.y;
+    out.z = p.z;
   }
 
   get bodyColor(): RGB {

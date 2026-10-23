@@ -20,7 +20,13 @@ export type SfxName =
   | 'enemyAttack'
   | 'enemySpawn'
   | 'death'
-  | 'click';
+  | 'click'
+  | 'enemyShoot'
+  | 'enemyCharge'
+  | 'explosion'
+  | 'dash'
+  | 'upgrade'
+  | 'lastStand';
 
 export class AudioManager {
   private ctx: AudioContext | null = null;
@@ -74,7 +80,7 @@ export class AudioManager {
     if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
     // Rate-limit identical sounds to avoid harsh stacking (e.g. many hits in one frame).
     const now = ctx.currentTime;
-    const minGap = name === 'hit' || name === 'enemyAttack' ? 0.035 : 0.012;
+    const minGap = name === 'hit' || name === 'enemyAttack' ? 0.035 : name === 'explosion' ? 0.06 : 0.012;
     if (now - (this.lastPlayed.get(name) ?? -1) < minGap) return;
     this.lastPlayed.set(name, now);
 
@@ -149,6 +155,31 @@ export class AudioManager {
         break;
       case 'click':
         this.tone(now, 'square', 700, 700, 0.025, 0.06);
+        break;
+      case 'enemyShoot':
+        this.tone(now, 'sawtooth', 900, 220, 0.16, 0.16 * intensity);
+        this.noise(now, 0.08, 2500, 'bandpass', 0.15 * intensity, 2);
+        break;
+      case 'enemyCharge':
+        // Rising whine: the audible half of the shooter's telegraph.
+        this.tone(now, 'triangle', 300, 1100, 0.55, 0.09 * intensity);
+        break;
+      case 'explosion':
+        this.noise(now, 0.45, 600, 'lowpass', 0.7, 0.7);
+        this.tone(now, 'sine', 120, 35, 0.4, 0.45);
+        break;
+      case 'dash':
+        this.noise(now, 0.18, 1800, 'bandpass', 0.3, 1.5);
+        this.tone(now, 'sine', 500, 180, 0.15, 0.1);
+        break;
+      case 'upgrade':
+        this.tone(now, 'triangle', 587, 587, 0.09, 0.18);
+        this.tone(now + 0.08, 'triangle', 880, 880, 0.09, 0.18);
+        this.tone(now + 0.16, 'triangle', 1175, 1175, 0.22, 0.18);
+        break;
+      case 'lastStand':
+        this.tone(now, 'sawtooth', 160, 320, 0.5, 0.25);
+        this.tone(now + 0.05, 'square', 640, 640, 0.3, 0.1);
         break;
     }
   }

@@ -1,14 +1,69 @@
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import type { Scene } from '@babylonjs/core/scene';
-import { fortressDecor } from './FortressDecor';
+import { SUN_DIRECTION } from '../config';
 import { hash2 } from '../core/SeededRandom';
 import { CellKind, cellIndex, type ArenaData, type DecorSlot } from '../procedural/ArenaTypes';
 import type { ThemePalette } from '../procedural/Themes';
 import type { MaterialLibrary } from '../render/Materials';
-import { Face, VoxelMeshBuilder, hexToRgb, mixRgb, scaleRgb, type RGB } from '../render/VoxelMeshBuilder';
+import { Face, VoxelMeshBuilder, hexToRgb, mixRgb, scaleRgb, type RGB, type VertexLighter } from '../render/VoxelMeshBuilder';
+import { VoxelWorld, type RayHit } from './VoxelWorld';
 
 const AO_LEVELS = [0.52, 0.68, 0.84, 1];
 const SIDE_SHADE: Record<number, number> = { [Face.PosX]: 0.84, [Face.NegX]: 0.78, [Face.PosZ]: 0.9, [Face.NegZ]: 0.72 };
+/** Brightness multiplier for surfaces the sun can't see. */
+const SUN_SHADOW = 0.58;
+/** Strength of baked lantern pools (vertex colours may exceed 1; the shader clamps). */
+const LANTERN_GAIN = 0.95;
+
+interface BakedLight {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+  color: RGB;
+}
+
+/**
+ * Bakes sun shadows (a ray toward the sun through the voxel heightmap) and lantern light pools
+ * into vertex colours. Static lighting then costs nothing per frame: no shadow maps, no extra
+ * dynamic lights, and the arena shader keeps a constant, small light count.
+ */
+function createLighter(data: ArenaData, lights: BakedLight[]): VertexLighter {
+  const world = new VoxelWorld(data);
+  const n = data.size;
+  let maxH = 0;
+  for (let i = 0; i < data.heights.length; i++) maxH = Math.max(maxH, data.heights[i]!);
+  const len = Math.hypot(SUN_DIRECTION.x, SUN_DIRECTION.y, SUN_DIRECTION.z);
+  const sx = -SUN_DIRECTION.x / len;
+  const sy = -SUN_DIRECTION.y / len;
+  const sz = -SUN_DIRECTION.z / len;
+  const hit: RayHit = { distance: 0, x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0 };
+  return (px, py, pz, nx, ny, nz, out) => {
+    let k = 1;
+    const facing = nx * sx + ny * sy + nz * sz;
+    // Only test surfaces that face the sun (the rest are already dark from real-time lambert),
+    // and only inside the grid where the heightmap is defined.
+    if (facing > 0.02 && px > 0 && pz > 0 && px < n && pz < n && py < maxH) {
+      const tMax = (maxH + 0.1 - py) / sy;
+      if (tMax > 0 && world.raycast(px, py, pz, sx, sy, sz, tMax, hit)) k = SUN_SHADOW;
+    }
+    out.r = out.g = out.b = k;
+    for (const L of lights) {
+      const dx = L.x - px;
+      const dy = L.y - py;
+      const dz = L.z - pz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 >= L.r * L.r) continue;
+      const d = Math.sqrt(d2) || 1e-3;
+      const fall = 1 - d / L.r;
+      const lambert = 0.3 + 0.7 * Math.max(0, (dx * nx + dy * ny + dz * nz) / d);
+      const a = LANTERN_GAIN * fall * fall * lambert;
+      out.r += L.color.r * a;
+      out.g += L.color.g * a;
+      out.b += L.color.b * a;
+    }
+  };
+}
 
 /**
  * Converts ArenaData into a handful of merged meshes:
@@ -28,6 +83,13 @@ export class ArenaRenderer {
     const n = data.size;
     const lit = new VoxelMeshBuilder();
     const glowBuilders: Record<'glow' | 'glow2', VoxelMeshBuilder> = { glow: new VoxelMeshBuilder(), glow2: new VoxelMeshBuilder() };
+    const glowColor = { glow: hexToRgb(theme.glow), glow2: hexToRgb(theme.glow2) };
+    const lights: BakedLight[] = [];
+    for (const d of data.decorations) {
+      if (!d.light || (d.slot !== 'glow' && d.slot !== 'glow2')) continue;
+      lights.push({ x: d.x, y: d.y, z: d.z, r: d.light, color: glowColor[d.slot] });
+    }
+    lit.lighter = createLighter(data, lights);
 
     const kindColor: Record<number, RGB> = {
       [CellKind.Floor]: hexToRgb(theme.floorA),
@@ -127,11 +189,16 @@ export class ArenaRenderer {
       glow2: hexToRgb(theme.glow2),
       backdrop: hexToRgb(theme.backdrop),
       backdropDark: hexToRgb(theme.backdropDark),
-      cloud: hexToRgb('#b5c9e4'),
+      cloud: hexToRgb(theme.cloud),
     };
-    const decorations = theme.id === 'ruins' ? fortressDecor(data) : data.decorations;
-    for (const d of decorations) {
-      if (d.slot === 'glow' || d.slot === 'glow2') {
+    for (const d of data.decorations) {
+      if (d.slot === 'cloud') {
+        // Clouds/smoke are far away and shouldn't pick up shadows or lantern light.
+        const saved: VertexLighter | null = lit.lighter;
+        lit.lighter = null;
+        lit.addBox(d.x, d.y, d.z, d.sx, d.sy, d.sz, slotColor.cloud, { skipBottom: false, faceShade: true });
+        lit.lighter = saved;
+      } else if (d.slot === 'glow' || d.slot === 'glow2') {
         glowBuilders[d.slot].addBox(d.x, d.y, d.z, d.sx, d.sy, d.sz, { r: 1, g: 1, b: 1 }, { faceShade: false, skipBottom: true });
       } else {
         lit.addBox(d.x, d.y, d.z, d.sx, d.sy, d.sz, slotColor[d.slot], { skipBottom: true, bottomShade: d.slot.startsWith('backdrop') ? 0.7 : 1 });
@@ -140,7 +207,6 @@ export class ArenaRenderer {
 
     const terrain = lit.build('arena_terrain', this.scene);
     terrain.material = this.materials.vertexLit('arena');
-    terrain.receiveShadows = true;
     this.finalizeStatic(terrain);
 
     for (const slot of ['glow', 'glow2'] as const) {

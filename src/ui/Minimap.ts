@@ -5,6 +5,8 @@ import type { NavGrid } from '../world/NavGrid';
 export interface MinimapBlip {
   x: number;
   z: number;
+  /** Archetype id; ranged enemies draw cyan to match their eyes. */
+  kind?: string;
 }
 
 /**
@@ -128,6 +130,9 @@ export class Minimap {
         cx = (cx / d) * max;
         cy = (cy / d) * max;
       }
+      const ranged = e.kind === 'shooter';
+      ctx.fillStyle = ranged ? '#3fd8ff' : '#ff3b3b';
+      ctx.shadowColor = ranged ? 'rgba(60,210,255,0.9)' : 'rgba(255,40,40,0.9)';
       ctx.beginPath();
       ctx.arc(cx, cy, W * 0.03, 0, Math.PI * 2);
       ctx.fill();

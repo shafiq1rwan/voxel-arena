@@ -2,6 +2,8 @@ import type { SkinPalette, WeaponDefinition } from '../combat/WeaponTypes';
 import { WavePhase } from '../waves/WaveManager';
 import { ICONS, h, setStyle, setText } from './dom';
 import { Minimap } from './Minimap';
+import type { OwnedUpgrade } from '../upgrades/UpgradeManager';
+import { upgradeIcon } from './icons';
 
 export interface HudSnapshot {
   health: number;
@@ -28,6 +30,10 @@ export interface HudSnapshot {
   /** Shield points; the shield bar is only shown while maxShield > 0. */
   shield?: number;
   maxShield?: number;
+  /** Short description of the wave from the wave table. */
+  waveLabel?: string;
+  /** Dash cooldown 0 (ready) .. 1 (just used); undefined when dash is locked. */
+  dashCooldown?: number;
 }
 
 interface DamageIndicator {
@@ -61,6 +67,9 @@ export class HUD {
   private weaponIcon: HTMLCanvasElement;
   private slotIcon: HTMLCanvasElement;
   private shieldBar: HTMLElement;
+  private abilityBar: HTMLElement;
+  private dashSlot: HTMLElement | null = null;
+  private dashShade: HTMLElement | null = null;
   private shieldFill: HTMLElement;
   private reloadBar: HTMLElement;
   private reloadFill: HTMLElement;
@@ -100,6 +109,7 @@ export class HUD {
     this.slotIcon = h('canvas', { class: 'slot-icon', width: 128, height: 48 });
     this.shieldFill = h('div', { class: 'bar-fill shield' });
     this.shieldBar = h('div', { class: 'bar shield-bar hidden' }, this.shieldFill);
+    this.abilityBar = h('div', { class: 'hud-bc ability-bar' });
     this.reloadFill = h('div', { class: 'reload-fill' });
     this.reloadBar = h('div', { class: 'reload-bar' }, h('span', null, 'RELOADING'), h('div', { class: 'reload-track' }, this.reloadFill));
     this.crosshair = h('div', { class: 'crosshair' }, h('i', { class: 'ch-t' }), h('i', { class: 'ch-b' }), h('i', { class: 'ch-l' }), h('i', { class: 'ch-r' }), h('b', { class: 'ch-dot' }));
@@ -163,11 +173,35 @@ export class HUD {
           h('div', { class: 'weapon-meta' }, this.weaponName, h('div', { class: 'ammo' }, this.ammoEl, this.reserveEl)),
         ),
       ),
+      this.abilityBar,
       this.fpsEl,
       this.debugEl,
     );
     parent.append(this.root);
     drawPortrait(this.root.querySelector('.portrait') as HTMLCanvasElement);
+  }
+
+  /** Rebuilds the bottom-centre bar: active abilities (with key + cooldown) then passive upgrades. */
+  setBuild(owned: OwnedUpgrade[], dashUnlocked: boolean): void {
+    const slots: HTMLElement[] = [];
+    this.dashSlot = this.dashShade = null;
+    if (dashUnlocked) {
+      this.dashShade = h('div', { class: 'ability-cooldown' });
+      this.dashSlot = h('div', { class: 'ability-slot active-ability cat-utility' }, h('div', { class: 'ability-icon', html: upgradeIcon('dashCharge') }), this.dashShade, h('kbd', { class: 'ability-key' }, 'Q'));
+      slots.push(this.dashSlot);
+    }
+    for (const o of owned) {
+      if (o.def.id === 'dashCharge') continue;
+      slots.push(
+        h(
+          'div',
+          { class: `ability-slot passive cat-${o.def.category}`, title: `${o.def.name} ×${o.stacks}` },
+          h('div', { class: 'ability-icon', html: upgradeIcon(o.def.id) }),
+          o.stacks > 1 ? h('b', { class: 'ability-count' }, String(o.stacks)) : null,
+        ),
+      );
+    }
+    this.abilityBar.replaceChildren(...slots);
   }
 
   show(): void {
@@ -228,6 +262,11 @@ export class HUD {
     this.bannerTimer = seconds;
   }
 
+  hideBanner(): void {
+    this.banner.classList.remove('show');
+    this.bannerTimer = 0;
+  }
+
   toast(text: string, seconds = 1.6): void {
     setText(this.toastEl, text);
     this.toastEl.classList.add('show');
@@ -255,7 +294,7 @@ export class HUD {
     setStyle(this.waveFill, 'transform', `scaleX(${s.totalThisWave > 0 ? remaining / s.totalThisWave : 0})`);
 
     if (s.phase !== this.lastPhase) {
-      if (s.phase === WavePhase.Prepare) this.showBanner(`WAVE ${s.wave}`, s.wave === 1 ? 'Survive the arena' : 'Get ready', 2.2);
+      if (s.phase === WavePhase.Prepare) this.showBanner(`WAVE ${s.wave}`, s.waveLabel ?? 'Get ready', 2.2);
       else if (s.phase === WavePhase.Reward) this.showBanner('WAVE COMPLETE', `Wave ${s.wave} cleared`, 2.6, 'good');
       this.lastPhase = s.phase;
     }
@@ -274,6 +313,12 @@ export class HUD {
     this.shieldBar.classList.toggle('hidden', maxShield <= 0);
     if (maxShield > 0) setStyle(this.shieldFill, 'transform', `scaleX(${Math.max(0, (s.shield ?? 0) / maxShield)})`);
     setStyle(this.vignette, 'opacity', hpFrac < 0.35 ? String((0.35 - hpFrac) * 2.4) : '0');
+
+    // --- Dash cooldown sweep ---
+    if (this.dashShade && s.dashCooldown !== undefined) {
+      setStyle(this.dashShade, 'transform', `scaleY(${s.dashCooldown})`);
+      this.dashSlot!.classList.toggle('ready', s.dashCooldown <= 0);
+    }
 
     // --- Ammo ---
     setText(this.ammoEl, String(s.ammo));

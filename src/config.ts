@@ -45,6 +45,12 @@ export const CONFIG = {
   },
 } as const;
 
+/**
+ * Direction the sun's light travels (normalised at use). Shared by the real-time light and the
+ * baked arena shadows so they always agree.
+ */
+export const SUN_DIRECTION = { x: -0.45, y: -0.85, z: -0.3 } as const;
+
 export type QualityLevel = 'low' | 'medium' | 'high';
 
 export const QUALITY_PRESETS: Record<QualityLevel, { maxPixelRatio: number; glow: boolean; particleScale: number; fogEnd: number }> = {

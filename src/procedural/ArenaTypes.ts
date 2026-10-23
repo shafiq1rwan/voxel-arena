@@ -36,6 +36,8 @@ export interface DecorBox {
   sy: number;
   sz: number;
   slot: DecorSlot;
+  /** If set, this glowing box also casts a baked pool of light with this radius (metres). */
+  light?: number;
 }
 
 export interface ArenaData {
