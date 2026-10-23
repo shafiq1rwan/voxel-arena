@@ -1,0 +1,23 @@
+{
+  "name": "voxel-survival-arena",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Wave-based first-person voxel arena survival game for desktop and mobile browsers.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.32.0",
+    "@fontsource/chakra-petch": "^5.3.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "vite": "^8.0.0",
+    "vitest": "^5.0.0"
+  }
+}

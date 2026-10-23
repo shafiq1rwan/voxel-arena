@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fortress visual and gameplay smoke test</title></head>
+<body><canvas id="game-canvas" tabindex="0" aria-label="Game view"></canvas><div id="ui"></div>
+<pre id="smoke-results" style="position:fixed;bottom:85px;left:18px;z-index:100;background:#101828dd;color:#c4ffc4;padding:10px;font:12px monospace;pointer-events:none">Testing...</pre>
+<script type="module">
+import '/src/styles/main.css';
+import '@fontsource/chakra-petch/700.css';
+import { Game } from '/src/core/Game.ts';
+import { AppState } from '/src/core/GameState.ts';
+const result = document.querySelector('#smoke-results');
+const checks = [];
+const check = (name, ok) => { checks.push({name, ok:!!ok}); if (!ok) throw new Error(name); };
+try {
+  const game = new Game(document.querySelector('canvas'), document.querySelector('#ui'));
+  await game.start(performance.now());
+  game.sm.engine.stopRenderLoop();
+  game.audio.setMuted(true);
+  const tick = (frames) => { for(let i=0;i<frames;i++) game.update(1/60); };
+  tick(2);
+  check('Fortress loads', game.theme.id === 'ruins' && game.state.is(AppState.Playing));
+  const initial = {...game.player.body};
+  window.dispatchEvent(new KeyboardEvent('keydown', {code:'KeyW'})); tick(30);
+  window.dispatchEvent(new KeyboardEvent('keyup', {code:'KeyW'})); tick(15);
+  check('Player movement', Math.hypot(game.player.body.x-initial.x,game.player.body.z-initial.z)>1);
+  window.dispatchEvent(new KeyboardEvent('keydown', {code:'Space'})); tick(10);
+  window.dispatchEvent(new KeyboardEvent('keyup', {code:'Space'}));
+  check('Jump', game.player.body.y>0.2); tick(90);
+  const ammo = game.weapons.ammo;
+  document.querySelector('canvas').dispatchEvent(new PointerEvent('pointerdown', {pointerType:'mouse',buttons:1,bubbles:true})); tick(30);
+  window.dispatchEvent(new PointerEvent('pointerup', {pointerType:'mouse',buttons:0})); tick(1);
+  check('Shooting consumes ammo', game.weapons.ammo<ammo && game.weapons.runStats.shotsFired>0);
+  window.dispatchEvent(new KeyboardEvent('keydown', {code:'KeyR'})); tick(1);
+  window.dispatchEvent(new KeyboardEvent('keyup', {code:'KeyR'})); tick(110);
+  check('Reload', game.weapons.ammo === ammo && game.weapons.reserve<150);
+  tick(300);
+  check('Enemy spawning', game.pool.aliveCount>0);
+  const enemy = game.pool.active.find(e=>e.alive);
+  const before = {...enemy.body}; tick(60);
+  check('Enemy AI moves', Math.hypot(enemy.body.x-before.x,enemy.body.z-before.z)>0.05);
+  game.pause(); check('Pause', game.state.is(AppState.Paused));
+  await game.resume(); check('Resume', game.state.is(AppState.Playing));
+  // Let real melee AI damage and kill the stationary player, then advance the death camera.
+  for(let i=0;i<7200 && !game.state.is(AppState.GameOver);i++) game.update(1/60);
+  check('Enemy damage, death and results', game.state.is(AppState.GameOver) && game.player.health===0);
+  await game.startRun('FORTRESS');
+  check('Retry resets health and ammo', game.player.health===100 && game.weapons.ammo===30 && game.state.is(AppState.Playing));
+  // Leave a real mid-wave scene for visual review, without generating fake gameplay entities.
+  tick(420);
+  const visible = game.pool.active.filter(e=>e.alive && Math.hypot(e.body.x-game.player.body.x,e.body.z-game.player.body.z)>3 && game.world.hasLineOfSight(game.player.body.x,game.player.eyeY,game.player.body.z,e.body.x,1,e.body.z));
+  const target = visible[0];
+  if (target) {
+    game.player.yaw=Math.atan2(target.body.x-game.player.body.x,target.body.z-game.player.body.z);
+    game.player.pitch=-0.06;
+    tick(1);
+  }
+  game.drawMinimap();
+  game.pause();
+  // Hide just the pause overlay, keeping simulation stopped for a reproducible screenshot.
+  game.pauseMenu.hide();
+  game.hud.banner.style.opacity='0';
+  await game.sm.scene.whenReadyAsync();
+  game.sm.scene.render();
+  result.textContent = checks.map(c=>'PASS '+c.name).join('\n');
+  result.dataset.status='passed';
+  const hide = document.createElement('button'); hide.textContent='Hide test results';
+  hide.style.cssText='position:fixed;bottom:18px;left:42%;z-index:110';
+  const gate = document.createElement('button'); gate.textContent='View gatehouse';
+  gate.style.cssText='position:fixed;bottom:48px;left:42%;z-index:110';
+  gate.onclick=()=>{
+    const c=game.arena.size/2;
+    game.player.yaw=Math.atan2(game.arena.size*0.36-c,game.arena.size-c);
+    game.player.pitch=-0.11;
+    game.player.update(0,game.input.state,false,1);
+    game.drawMinimap();game.sm.scene.render();
+  };
+  hide.onclick=()=>{result.style.display='none';hide.remove();gate.remove()};document.body.append(hide,gate);
+} catch(error) { result.textContent=checks.map(c=>(c.ok?'PASS ':'FAIL ')+c.name).join('\n')+'\n'+error.stack;result.dataset.status='failed';console.error(error); }
+</script></body></html>
